@@ -145,18 +145,35 @@ Reliability is paramount for an indexing solution. SolStream implements robust m
 
 *   **Idempotency:** The `_solstream_processed` table (managed by the `Tracker`) guarantees that each unique transaction is processed only once, preventing duplicate entries or side effects even if the indexer restarts or encounters temporary failures.
 *   **Structured `SolStreamError`:**
+    SolStream defines a custom error enumeration, `SolStreamError`, to provide clear, actionable error reporting throughout the SDK. This error type implements `std::error::Error` and `std::fmt::Display`, allowing for seamless integration with Rust's error handling ecosystem and easy human-readable output. For professional Rust libraries, the `thiserror` crate is a highly recommended tool for defining custom error types with rich context and automatic `From` conversions.
+
     ```rust
+    // Assuming 'thiserror' is a dependency in your Cargo.toml
+    use thiserror::Error;
+
+    /// Custom error type for SolStream operations.
+    #[derive(Debug, Error)]
     pub enum SolStreamError {
-        DatabaseError(sqlx::Error), // Errors during database operations
-        DecodingError(String),      // Errors parsing transaction data or events
-        RpcError(String),           // Errors interacting with Solana RPC
-        // ... potentially more specific error types for network, config, etc.
+        /// Errors encountered during database operations.
+        #[error("Database error: {0}")]
+        DatabaseError(#[from] sqlx::Error),
+        /// Errors during transaction data or event decoding.
+        #[error("Decoding error: {0}")]
+        DecodingError(String),
+        /// Errors interacting with the Solana RPC.
+        #[error("RPC error: {0}")]
+        RpcError(String),
+        /// Errors related to configuration, e.g., missing environment variables.
+        #[error("Configuration error: {0}")]
+        ConfigError(#[from] std::env::VarError),
+        // Add more specific error types as the SDK evolves.
     }
     ```
-    Errors are explicitly typed, allowing for precise handling and debugging.
-*   **Explicit Error Propagation:** All errors propagate up the call stack, ensuring no silent failures.
+*   **Contextual Errors:** When errors occur, SolStream aims to provide rich contextual information, including the specific operation, input data, and any underlying causes. This significantly aids in debugging and issue resolution, enabling developers to quickly pinpoint and address issues.
+*   **Explicit Error Propagation:** All errors propagate up the call stack, ensuring no silent failures. Developers are guided to handle errors appropriately, either by logging, retrying, or gracefully exiting.
 *   **Logging:** Detailed logging (e.g., using `tracing` crate) is integrated throughout the SDK to provide visibility into the pipeline's operation, aiding in diagnostics and monitoring.
-*   **Retry Logic (Production Roadmap):** For transient failures (e.g., RPC timeouts), a production-ready SolStream will implement configurable retry mechanisms with exponential backoff.
+*   **Retry Logic (Production Roadmap):** For transient failures (e.g., RPC timeouts, temporary network glitches), a production-ready SolStream will implement configurable retry mechanisms with exponential backoff. This ensures resilience against intermittent issues without requiring constant developer intervention.
+*   **Dead-Letter Queues (Production Roadmap):** For events that consistently fail processing after all retries (e.g., due to malformed data or unrecoverable application errors), a dead-letter queue mechanism will be introduced. This prevents such problematic events from blocking the main processing pipeline and allows for manual inspection and reprocessing.
 *   **Database Transactions:** For handlers performing multiple database operations, developers are strongly encouraged to wrap their logic in database transactions to ensure atomicity (all or nothing) and data consistency.
 
 ## 7. Security Considerations
@@ -196,10 +213,10 @@ solstream-sdk/
 ### Build Flow:
 1.  **Define Program:** Developer writes their Solana program (e.g., using Anchor) and generates its `idl.json`.
 2.  **Integrate IDL:** Developer places `idl/your_program.json` into their SolStream project.
-3.  **Generate Types:** Runs `cargo build` which triggers the SolStream Proc-macro to generate Rust `structs` from the IDL.
-4.  **Import Generated Types:** Developer imports generated types: `use solstream::generated::TransferEvent;`.
-5.  **Implement Handler:** Implements the `EventHandler<TransferEvent>` trait for their custom logic.
-6.  **Configure & Run:** Configures SolStream using the builder pattern and runs the indexer with `cargo run`.
+3.  **Generate Types:** Runs `cargo build` → Proc-macro generates structs
+4.  **Import Generated Types:** Developer imports generated types: `use solstream::generated::TransferEvent;`
+5.  **Implement Handler:** Implements `EventHandler<TransferEvent>` trait
+6.  **Configure & Run:** Configures SolStream using the builder pattern and runs the indexer with `cargo run`
 
 ## 9. Developer Quickstart
 
@@ -222,6 +239,57 @@ use solstream::generated::TransferEvent; // Assuming your IDL defines a Transfer
 use sqlx::PgPool;
 use async_trait::async_trait;
 
+/// A sample event handler for `TransferEvent`s.
+pub struct MyTransferHandler;
+
+#[async_trait]
+impl EventHandler<TransferEvent> for MyTransferHandler {
+    /// Handles a `TransferEvent`, prints its details, and persists it to a database.
+    ///
+    /// # Arguments
+    ///
+    /// * `event` - The deserialized `TransferEvent` object from the blockchain.
+    /// * `db` - A database connection pool for performing persistence operations.
+    /// * `signature` - The unique transaction signature associated with this event.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success (`Ok(())`) or a `SolStreamError` if
+    /// a database operation fails.
+    async fn handle(&self, event: TransferEvent, db: &PgPool, signature: &str)
+        -> Result<(), SolStreamError> {
+        println!("Processing Transfer: Sig={}, From={}, To={}, Amount={}",
+                 signature, event.from, event.to, event.amount);
+
+        // Example: Persist event data to a 'transfers' table in the database.
+        // `sqlx::query!` is used for type-safe and injection-resistant queries.
+        sqlx::query!(
+            "INSERT INTO transfers (signature, from_wallet, to_wallet, amount)
+             VALUES ($1, $2, $3, $4)",
+            signature, event.from.to_string(), event.to.to_string(), event.amount as i64
+        )
+        .execute(db)
+        .await
+        .map_err(SolStreamError::DatabaseError)?; // Map `sqlx::Error` to `SolStreamError::DatabaseError`
+        
+        Ok(())
+    }
+}
+```
+
+### Step 3: Initialize and Run SolStream
+
+```rust
+use solstream::{EventHandler, SolStream, SolStreamError};
+// Assuming `TransferEvent` is generated by the SolStream procedural macro
+use solstream::generated::TransferEvent; 
+use async_trait::async_trait;
+use sqlx::PgPool;
+use std::env;
+use std::error::Error; // Import the standard `Error` trait for main's return type
+
+// Re-using the handler struct from Step 2 for clarity.
+// In a real application, this would typically be defined in its own module.
 pub struct MyTransferHandler;
 
 #[async_trait]
@@ -231,7 +299,6 @@ impl EventHandler<TransferEvent> for MyTransferHandler {
         println!("Processing Transfer: Sig={}, From={}, To={}, Amount={}",
                  signature, event.from, event.to, event.amount);
 
-        // Example: Persist to database
         sqlx::query!(
             "INSERT INTO transfers (signature, from_wallet, to_wallet, amount)
              VALUES ($1, $2, $3, $4)",
@@ -244,33 +311,38 @@ impl EventHandler<TransferEvent> for MyTransferHandler {
         Ok(())
     }
 }
-```
-
-### Step 3: Initialize and Run SolStream
-
-```rust
-use solstream::SolStream;
-use std::env;
-use anyhow::Result; // Using anyhow for simplified error handling in main
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    // Load .env file for local development (optional, but good practice)
+async fn main() -> Result<(), Box<dyn Error>> {
+    // Loads environment variables from a `.env` file for local development.
+    // This call is optional and will not error if the file is not found,
+    // but subsequent `env::var` calls will fail if variables are missing.
     dotenv::dotenv().ok(); 
 
-    // Initialize SolStream with configuration and register handlers
+    // Retrieve configuration from environment variables.
+    // Errors from `env::var` are mapped to `SolStreamError::ConfigError`
+    // and then boxed for the consistent main function return type.
+    let rpc_url = env::var("RPC_URL")
+        .map_err(|e| Box::new(SolStreamError::ConfigError(e)) as Box<dyn Error>)?;
+    let database_url = env::var("DATABASE_URL")
+        .map_err(|e| Box::new(SolStreamError::ConfigError(e)) as Box<dyn Error>)?;
+    let program_id_str = env::var("PROGRAM_ID")
+        .map_err(|e| Box::new(SolStreamError::ConfigError(e)) as Box<dyn Error>)?;
+
+    // Initialize SolStream with the provided configuration and registers
+    // the custom event handler.
+    // The `SolStream::new()` builder pattern allows for flexible
+    // and type-safe configuration.
     SolStream::new()
-        // Configure RPC endpoint
-        .with_rpc(&env::var("RPC_URL")?)
-        // Configure database connection
-        .with_database(&env::var("DATABASE_URL")?)
-        // Specify the program ID to index
-        .program_id(&env::var("PROGRAM_ID")?)
-        // Register your custom event handler
+        .with_rpc(&rpc_url)
+        .with_database(&database_url)
+        .program_id(&program_id_str)
         .register_handler::<TransferEvent>(MyTransferHandler)
-        // Start the indexing process (e.g., polling for now)
-        .start_polling() 
-        .await?;
+        .start_polling() // Initiates the polling-based indexing process.
+        .await
+        .map_err(|e| Box::new(e) as Box<dyn Error>)?; // Map `SolStreamError` to `Box<dyn Error>`
+
+    println!("SolStream indexer started successfully.");
 
     Ok(())
 }
