@@ -1,10 +1,10 @@
-# SolStream Architecture
+# Solana Indexer Architecture
 
-**Build Philosophy:** SolStream is designed as a developer-centric SDK for Solana data indexing. Our philosophy is to provide a highly extensible, reliable, and secure platform that prioritizes a seamless developer experience (DX) while offering a clear path from local development to production-grade deployments. We start with foundational reliability on localnet and strategically integrate production-ready features.
+**Build Philosophy:** SolanaIndexer is designed as a developer-centric SDK for Solana data indexing. Our philosophy is to provide a highly extensible, reliable, and secure platform that prioritizes a seamless developer experience (DX) while offering a clear path from local development to production-grade deployments. We start with foundational reliability on localnet and strategically integrate production-ready features.
 
 ## 1. Core System Architecture: Event-Driven Pipeline
 
-SolStream operates on an event-driven pipeline model, designed for flexibility in data acquisition and processing. This architecture ensures modularity, allowing developers to choose input sources and define custom handling logic.
+SolanaIndexer operates on an event-driven pipeline model, designed for flexibility in data acquisition and processing. This architecture ensures modularity, allowing developers to choose input sources and define custom handling logic.
 
 ### Data Flow Overview
 
@@ -17,7 +17,7 @@ The core pipeline consists of the following stages:
 3.  **Decoder:** Parses the raw transaction data.
     *   Utilizes automatically generated Rust structs from the program's IDL (Interface Definition Language) to interpret instruction data and emitted events into strongly-typed Rust objects. This stage ensures type safety and reduces boilerplate for developers.
     *   Handles common Solana transaction types (e.g., SPL Token Program instructions) even without a specific program IDL, allowing for general-purpose indexing.
-4.  **Idempotency Tracker:** Before processing, checks a persistent store (`_solstream_processed` table) to prevent re-processing already handled transactions. This ensures data consistency and reliability.
+4.  **Idempotency Tracker:** Before processing, checks a persistent store (`_solana_indexer_processed` table) to prevent re-processing already handled transactions. This ensures data consistency and reliability.
 5.  **Handler:** Executes user-defined business logic.
     *   This is where the developer's custom code integrates. For each decoded event or instruction, the SDK invokes a registered `EventHandler` implementation.
     *   Typical operations include database inserts, updates, external API calls, or triggering further processing.
@@ -33,7 +33,7 @@ The core pipeline consists of the following stages:
             │
             ▼
 ┌──────────────────────────────────────┐
-│ SolStream Core Loop                  │
+│ SolanaIndexer Core Loop                  │
 │ (Potentially Multi-threaded/Async)   │
 │                                      │
 │  1. Input Source (Poller/Subscriber) │
@@ -57,18 +57,18 @@ The core pipeline consists of the following stages:
 
 ## 2. Configuration Management
 
-SolStream provides a flexible configuration system, blending ease-of-use with programmatic control, crucial for both local development and production deployments.
+SolanaIndexer provides a flexible configuration system, blending ease-of-use with programmatic control, crucial for both local development and production deployments.
 
-### `SolStreamConfig` and Builder Pattern
+### `SolanaIndexerConfig` and Builder Pattern
 
-Configuration is managed via a `SolStreamConfig` struct, built using a fluent builder pattern. This approach offers:
+Configuration is managed via a `SolanaIndexerConfig` struct, built using a fluent builder pattern. This approach offers:
 *   **Type Safety:** All configuration parameters are strongly typed.
 *   **Discoverability:** IDE auto-completion guides developers through available options.
 *   **Flexibility:** Easily integrate configuration from various sources (environment variables, files, hardcoded defaults).
 
 **Example:**
 ```rust
-SolStream::new()
+SolanaIndexer::new()
     .with_rpc("http://127.0.0.1:8899")
     .with_database(env::var("DATABASE_URL")?)
     .program_id(env::var("PROGRAM_ID")?)
@@ -79,15 +79,15 @@ SolStream::new()
 
 ### Environment Variable Integration
 
-For convenience, especially in local development, SolStream seamlessly integrates with environment variables:
+For convenience, especially in local development, SolanaIndexer seamlessly integrates with environment variables:
 *   **Automatic `env::var` Lookup:** Configuration methods (e.g., `.with_database()`) can directly consume values from `std::env::var`.
-*   **`.env` File Support:** Developers can use popular crates like `dotenv` to load variables from a `.env` file into the environment. SolStream expects these to be loaded *before* its configuration methods are called.
+*   **`.env` File Support:** Developers can use popular crates like `dotenv` to load variables from a `.env` file into the environment. SolanaIndexer expects these to be loaded *before* its configuration methods are called.
 
 **Best Practice:** Always `.gitignore` your `.env` files to prevent sensitive information from being committed to version control. For production, rely on explicit environment variables or secrets management systems rather than `.env` files.
 
 ## 3. Indexer Types and Selection
 
-SolStream supports multiple indexing strategies, allowing developers to select the best fit for their use case and performance requirements.
+SolanaIndexer supports multiple indexing strategies, allowing developers to select the best fit for their use case and performance requirements.
 
 *   **Program-Specific Polling (Current Default):**
     *   **Mechanism:** Periodically queries an RPC node for transactions related to a specific `PROGRAM_ID`.
@@ -105,30 +105,30 @@ SolStream supports multiple indexing strategies, allowing developers to select t
 
 ## 4. IDL Processing & Type Generation (Developer Experience Highlight)
 
-A cornerstone of SolStream's DX is its ability to transform Solana program IDLs into strongly-typed Rust code.
+A cornerstone of SolanaIndexer's DX is its ability to transform Solana program IDLs into strongly-typed Rust code.
 
 *   **IDL-Driven Development:** Developers place their Solana program's `idl.json` file(s) in a designated `idl/` directory within their project.
-*   **Procedural Macro Compilation:** During `cargo build`, a SolStream procedural macro reads and parses these `idl.json` files.
+*   **Procedural Macro Compilation:** During `cargo build`, a SolanaIndexer procedural macro reads and parses these `idl.json` files.
 *   **Automatic Code Generation:** The macro automatically generates:
     *   Rust `struct` definitions for all defined accounts and **emitted events**.
     *   Necessary traits (e.g., `AnchorDeserialize`, `BorshDeserialize`) for deserializing raw on-chain data into these generated types.
-    *   An example generated type: `use solstream::generated::TransferEvent;`.
+    *   An example generated type: `use solana_indexer::generated::TransferEvent;`.
 *   **Type Safety and Reduced Boilerplate:** This generation eliminates manual struct definition and deserialization logic, providing compile-time type checking and significantly reducing development effort and potential errors.
 *   **Event Discriminators:** The SDK's `Decoder` uses unique 8-byte discriminators (automatically derived or specified in the IDL) to identify and correctly deserialize emitted events from transaction logs into their corresponding generated Rust types.
 
 ### General Indexing Without IDL
 
-For scenarios where a specific program IDL isn't available or desired (e.g., indexing generic SPL Token transfers), SolStream's `Decoder` can also interpret common instruction types by directly parsing their known byte layouts. This provides flexibility but requires the SDK to maintain knowledge of these specific instruction formats.
+For scenarios where a specific program IDL isn't available or desired (e.g., indexing generic SPL Token transfers), SolanaIndexer's `Decoder` can also interpret common instruction types by directly parsing their known byte layouts. This provides flexibility but requires the SDK to maintain knowledge of these specific instruction formats.
 
 ## 5. Extensibility: The `EventHandler` Trait (Custom Logic Injection)
 
-The `EventHandler` trait is SolStream's primary extension point, enabling developers to inject their custom business logic cleanly and efficiently.
+The `EventHandler` trait is SolanaIndexer's primary extension point, enabling developers to inject their custom business logic cleanly and efficiently.
 
 ```rust
 #[async_trait]
 pub trait EventHandler<T>: Send + Sync + 'static {
     async fn handle(&self, event: T, db: &PgPool, signature: &str)
-        -> Result<(), SolStreamError>;
+        -> Result<(), SolanaIndexerError>;
 }
 ```
 
@@ -137,23 +137,23 @@ pub trait EventHandler<T>: Send + Sync + 'static {
     *   `event: T`: The strongly-typed, deserialized event object from the blockchain.
     *   `db: &PgPool`: A database connection pool (e.g., `sqlx::PgPool`), providing a convenient way to interact with a persistent store.
     *   `signature: &str`: The transaction signature, useful for logging, linking, or debugging.
-*   **SDK Invocation:** The SolStream core loop, after decoding a transaction and identifying an event of type `T`, automatically finds the developer-registered `EventHandler<T>` instance and calls its `handle` method. This abstraction means developers only focus on *what* to do with the data, not *how* to acquire or decode it.
+*   **SDK Invocation:** The SolanaIndexer core loop, after decoding a transaction and identifying an event of type `T`, automatically finds the developer-registered `EventHandler<T>` instance and calls its `handle` method. This abstraction means developers only focus on *what* to do with the data, not *how* to acquire or decode it.
 
 ## 6. Reliability & Error Handling
 
-Reliability is paramount for an indexing solution. SolStream implements robust mechanisms to ensure data integrity and system stability.
+Reliability is paramount for an indexing solution. SolanaIndexer implements robust mechanisms to ensure data integrity and system stability.
 
-*   **Idempotency:** The `_solstream_processed` table (managed by the `Tracker`) guarantees that each unique transaction is processed only once, preventing duplicate entries or side effects even if the indexer restarts or encounters temporary failures.
-*   **Structured `SolStreamError`:**
-    SolStream defines a custom error enumeration, `SolStreamError`, to provide clear, actionable error reporting throughout the SDK. This error type implements `std::error::Error` and `std::fmt::Display`, allowing for seamless integration with Rust's error handling ecosystem and easy human-readable output. For professional Rust libraries, the `thiserror` crate is a highly recommended tool for defining custom error types with rich context and automatic `From` conversions.
+*   **Idempotency:** The `_solana_indexer_processed` table (managed by the `Tracker`) guarantees that each unique transaction is processed only once, preventing duplicate entries or side effects even if the indexer restarts or encounters temporary failures.
+*   **Structured `SolanaIndexerError`:**
+    SolanaIndexer defines a custom error enumeration, `SolanaIndexerError`, to provide clear, actionable error reporting throughout the SDK. This error type implements `std::error::Error` and `std::fmt::Display`, allowing for seamless integration with Rust's error handling ecosystem and easy human-readable output. For professional Rust libraries, the `thiserror` crate is a highly recommended tool for defining custom error types with rich context and automatic `From` conversions.
 
     ```rust
     // Assuming 'thiserror' is a dependency in your Cargo.toml
     use thiserror::Error;
 
-    /// Custom error type for SolStream operations.
+    /// Custom error type for SolanaIndexer operations.
     #[derive(Debug, Error)]
-    pub enum SolStreamError {
+    pub enum SolanaIndexerError {
         /// Errors encountered during database operations.
         #[error("Database error: {0}")]
         DatabaseError(#[from] sqlx::Error),
@@ -169,33 +169,33 @@ Reliability is paramount for an indexing solution. SolStream implements robust m
         // Add more specific error types as the SDK evolves.
     }
     ```
-*   **Contextual Errors:** When errors occur, SolStream aims to provide rich contextual information, including the specific operation, input data, and any underlying causes. This significantly aids in debugging and issue resolution, enabling developers to quickly pinpoint and address issues.
+*   **Contextual Errors:** When errors occur, SolanaIndexer aims to provide rich contextual information, including the specific operation, input data, and any underlying causes. This significantly aids in debugging and issue resolution, enabling developers to quickly pinpoint and address issues.
 *   **Explicit Error Propagation:** All errors propagate up the call stack, ensuring no silent failures. Developers are guided to handle errors appropriately, either by logging, retrying, or gracefully exiting.
 *   **Logging:** Detailed logging (e.g., using `tracing` crate) is integrated throughout the SDK to provide visibility into the pipeline's operation, aiding in diagnostics and monitoring.
-*   **Retry Logic (Production Roadmap):** For transient failures (e.g., RPC timeouts, temporary network glitches), a production-ready SolStream will implement configurable retry mechanisms with exponential backoff. This ensures resilience against intermittent issues without requiring constant developer intervention.
+*   **Retry Logic (Production Roadmap):** For transient failures (e.g., RPC timeouts, temporary network glitches), a production-ready SolanaIndexer will implement configurable retry mechanisms with exponential backoff. This ensures resilience against intermittent issues without requiring constant developer intervention.
 *   **Dead-Letter Queues (Production Roadmap):** For events that consistently fail processing after all retries (e.g., due to malformed data or unrecoverable application errors), a dead-letter queue mechanism will be introduced. This prevents such problematic events from blocking the main processing pipeline and allows for manual inspection and reprocessing.
 *   **Database Transactions:** For handlers performing multiple database operations, developers are strongly encouraged to wrap their logic in database transactions to ensure atomicity (all or nothing) and data consistency.
 
 ## 7. Security Considerations
 
-Security is built into SolStream's design, protecting both the indexed data and the developer's application.
+Security is built into SolanaIndexer's design, protecting both the indexed data and the developer's application.
 
 *   **No Hardcoded Secrets:** Configuration encourages the use of environment variables, preventing sensitive information (database credentials, API keys) from being hardcoded or committed to version control.
 *   **Input Validation (Implicit):** IDL-driven decoding inherently provides a form of input validation. Data not conforming to the defined IDL structs will fail deserialization, preventing malformed on-chain data from being incorrectly processed.
-*   **Safe Database Interactions:** By promoting `sqlx` and parameterized queries, SolStream guides developers towards preventing common database vulnerabilities like SQL injection.
+*   **Safe Database Interactions:** By promoting `sqlx` and parameterized queries, SolanaIndexer guides developers towards preventing common database vulnerabilities like SQL injection.
 *   **Minimal Privileges:** Encourage running the indexer with the minimum necessary permissions for both network and database access.
 *   **Open Source Auditability:** As an open-source SDK, the codebase is transparent and auditable by the community, fostering trust and allowing for early detection of potential vulnerabilities.
 
 ## 8. Directory Structure
 
 ```
-solstream-sdk/
+solana-indexer/
 ├── Cargo.toml
 ├── idl/
 │   └── your_program.json          // Developer drops IDL here (e.g., from Anchor)
 ├── src/
 │   ├── lib.rs                     // Public API and main entry point
-│   ├── config.rs                  // SolStreamConfig and builder logic
+│   ├── config.rs                  // SolanaIndexerConfig and builder logic
 │   ├── input_sources/             // Poller and future Subscriber implementations
 │   │   ├── poller.rs
 │   │   └── websocket.rs           // (Future)
@@ -203,7 +203,7 @@ solstream-sdk/
 │   ├── decoder.rs                 // IDL-driven and generic data parsing
 │   ├── tracker.rs                 // Idempotency tracking logic
 │   ├── traits.rs                  // EventHandler trait definition
-│   ├── error.rs                   // SolStreamError enum definition
+│   ├── error.rs                   // SolanaIndexerError enum definition
 │   ├── storage.rs                 // Database interaction utilities (e.g., SQLx)
 │   └── macros/                    // Procedural macro for IDL compilation
 └── examples/
@@ -212,11 +212,11 @@ solstream-sdk/
 
 ### Build Flow:
 1.  **Define Program:** Developer writes their Solana program (e.g., using Anchor) and generates its `idl.json`.
-2.  **Integrate IDL:** Developer places `idl/your_program.json` into their SolStream project.
+2.  **Integrate IDL:** Developer places `idl/your_program.json` into their SolanaIndexer project.
 3.  **Generate Types:** Runs `cargo build` → Proc-macro generates structs
-4.  **Import Generated Types:** Developer imports generated types: `use solstream::generated::TransferEvent;`
+4.  **Import Generated Types:** Developer imports generated types: `use solana_indexer::generated::TransferEvent;`
 5.  **Implement Handler:** Implements `EventHandler<TransferEvent>` trait
-6.  **Configure & Run:** Configures SolStream using the builder pattern and runs the indexer with `cargo run`
+6.  **Configure & Run:** Configures SolanaIndexer using the builder pattern and runs the indexer with `cargo run`
 
 ## 9. Developer Quickstart
 
@@ -234,8 +234,8 @@ For production, these should be explicit environment variables.
 ### Step 2: Implement Your EventHandler
 
 ```rust
-use solstream::{EventHandler, SolStreamError};
-use solstream::generated::TransferEvent; // Assuming your IDL defines a TransferEvent
+use solana_indexer::{EventHandler, SolanaIndexerError};
+use solana_indexer::generated::TransferEvent; // Assuming your IDL defines a TransferEvent
 use sqlx::PgPool;
 use async_trait::async_trait;
 
@@ -254,10 +254,10 @@ impl EventHandler<TransferEvent> for MyTransferHandler {
     ///
     /// # Returns
     ///
-    /// A `Result` indicating success (`Ok(())`) or a `SolStreamError` if
+    /// A `Result` indicating success (`Ok(())`) or a `SolanaIndexerError` if
     /// a database operation fails.
     async fn handle(&self, event: TransferEvent, db: &PgPool, signature: &str)
-        -> Result<(), SolStreamError> {
+        -> Result<(), SolanaIndexerError> {
         println!("Processing Transfer: Sig={}, From={}, To={}, Amount={}",
                  signature, event.from, event.to, event.amount);
 
@@ -270,19 +270,19 @@ impl EventHandler<TransferEvent> for MyTransferHandler {
         )
         .execute(db)
         .await
-        .map_err(SolStreamError::DatabaseError)?; // Map `sqlx::Error` to `SolStreamError::DatabaseError`
+        .map_err(SolanaIndexerError::DatabaseError)?; // Map `sqlx::Error` to `SolanaIndexerError::DatabaseError`
         
         Ok(())
     }
 }
 ```
 
-### Step 3: Initialize and Run SolStream
+### Step 3: Initialize and Run SolanaIndexer
 
 ```rust
-use solstream::{EventHandler, SolStream, SolStreamError};
-// Assuming `TransferEvent` is generated by the SolStream procedural macro
-use solstream::generated::TransferEvent; 
+use solana_indexer::{EventHandler, SolanaIndexer, SolanaIndexerError};
+// Assuming `TransferEvent` is generated by the SolanaIndexer procedural macro
+use solana_indexer::generated::TransferEvent; 
 use async_trait::async_trait;
 use sqlx::PgPool;
 use std::env;
@@ -295,7 +295,7 @@ pub struct MyTransferHandler;
 #[async_trait]
 impl EventHandler<TransferEvent> for MyTransferHandler {
     async fn handle(&self, event: TransferEvent, db: &PgPool, signature: &str)
-        -> Result<(), SolStreamError> {
+        -> Result<(), SolanaIndexerError> {
         println!("Processing Transfer: Sig={}, From={}, To={}, Amount={}",
                  signature, event.from, event.to, event.amount);
 
@@ -306,7 +306,7 @@ impl EventHandler<TransferEvent> for MyTransferHandler {
         )
         .execute(db)
         .await
-        .map_err(SolStreamError::DatabaseError)?;
+        .map_err(SolanaIndexerError::DatabaseError)?;
         
         Ok(())
     }
@@ -320,29 +320,29 @@ async fn main() -> Result<(), Box<dyn Error>> {
     dotenv::dotenv().ok(); 
 
     // Retrieve configuration from environment variables.
-    // Errors from `env::var` are mapped to `SolStreamError::ConfigError`
+    // Errors from `env::var` are mapped to `SolanaIndexerError::ConfigError`
     // and then boxed for the consistent main function return type.
     let rpc_url = env::var("RPC_URL")
-        .map_err(|e| Box::new(SolStreamError::ConfigError(e)) as Box<dyn Error>)?;
+        .map_err(|e| Box::new(SolanaIndexerError::ConfigError(e)) as Box<dyn Error>)?;
     let database_url = env::var("DATABASE_URL")
-        .map_err(|e| Box::new(SolStreamError::ConfigError(e)) as Box<dyn Error>)?;
+        .map_err(|e| Box::new(SolanaIndexerError::ConfigError(e)) as Box<dyn Error>)?;
     let program_id_str = env::var("PROGRAM_ID")
-        .map_err(|e| Box::new(SolStreamError::ConfigError(e)) as Box<dyn Error>)?;
+        .map_err(|e| Box::new(SolanaIndexerError::ConfigError(e)) as Box<dyn Error>)?;
 
-    // Initialize SolStream with the provided configuration and registers
+    // Initialize SolanaIndexer with the provided configuration and registers
     // the custom event handler.
-    // The `SolStream::new()` builder pattern allows for flexible
+    // The `SolanaIndexer::new()` builder pattern allows for flexible
     // and type-safe configuration.
-    SolStream::new()
+    SolanaIndexer::new()
         .with_rpc(&rpc_url)
         .with_database(&database_url)
         .program_id(&program_id_str)
         .register_handler::<TransferEvent>(MyTransferHandler)
         .start_polling() // Initiates the polling-based indexing process.
         .await
-        .map_err(|e| Box::new(e) as Box<dyn Error>)?; // Map `SolStreamError` to `Box<dyn Error>`
+        .map_err(|e| Box::new(e) as Box<dyn Error>)?; // Map `SolanaIndexerError` to `Box<dyn Error>`
 
-    println!("SolStream indexer started successfully.");
+    println!("SolanaIndexer indexer started successfully.");
 
     Ok(())
 }
@@ -351,7 +351,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 ## 10. Production Roadmap & Future Enhancements
 
-SolStream is on a continuous path of improvement, with a clear roadmap to enhance its capabilities for production environments.
+SolanaIndexer is on a continuous path of improvement, with a clear roadmap to enhance its capabilities for production environments.
 
 *   **Phase 1 (Current):** Foundational localnet polling, robust idempotency, `sqlx` integration, IDL-driven type generation.
 *   **Phase 2: Real-time & Resilient Indexing:**
@@ -363,7 +363,7 @@ SolStream is on a continuous path of improvement, with a clear roadmap to enhanc
     *   Monitoring and observability dashboards (e.g., Prometheus/Grafana integration).
     *   Dead-letter queue support for unprocessable events.
 *   **Phase 4: Advanced Indexing Patterns:**
-    *   Multi-program indexing capabilities from a single SolStream instance.
+    *   Multi-program indexing capabilities from a single SolanaIndexer instance.
     *   Custom RPC provider support for greater flexibility.
     *   Performance benchmarks and optimizations against existing indexing solutions.
     *   Support for on-chain state change tracking (e.g., account data changes).
