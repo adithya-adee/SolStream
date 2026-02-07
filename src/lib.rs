@@ -54,17 +54,19 @@
 
 // Public API exports
 pub use config::{SolanaIndexerConfig, SolanaIndexerConfigBuilder};
+pub use decoder::{Decoder, DecodedTransaction, EventType, InstructionInfo, ParsedEvent};
 pub use error::{Result, SolanaIndexerError};
+pub use fetcher::Fetcher;
 pub use sources::poller::Poller;
 
 // Module declarations
 pub mod config;
+pub mod decoder;
 pub mod error;
+pub mod fetcher;
 pub mod sources;
 
 // Future modules (placeholders for architecture compliance)
-// pub mod fetcher;
-// pub mod decoder;
 // pub mod tracker;
 // pub mod traits;
 // pub mod storage;

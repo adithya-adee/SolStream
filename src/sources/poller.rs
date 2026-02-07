@@ -4,7 +4,9 @@
 //! Solana RPC endpoints for new transaction signatures.
 
 use crate::config::SolanaIndexerConfig;
+use crate::decoder::Decoder;
 use crate::error::{Result, SolanaIndexerError};
+use crate::fetcher::Fetcher;
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::signature::Signature;
@@ -20,7 +22,7 @@ use tokio::time;
 /// # Example
 ///
 /// ```no_run
-/// # use solstream::{Poller, SolanaIndexerConfigBuilder};
+/// # use solana_indexer::{Poller, SolanaIndexerConfigBuilder};
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let config = SolanaIndexerConfigBuilder::new()
 ///     .with_rpc("http://127.0.0.1:8899")
@@ -51,7 +53,7 @@ impl Poller {
     /// # Example
     ///
     /// ```no_run
-    /// # use solstream::{Poller, SolanaIndexerConfigBuilder};
+    /// # use solana_indexer::{Poller, SolanaIndexerConfigBuilder};
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let config = SolanaIndexerConfigBuilder::new()
     ///     .with_rpc("http://127.0.0.1:8899")
@@ -136,7 +138,7 @@ impl Poller {
     /// # Example
     ///
     /// ```no_run
-    /// # use solstream::{Poller, SolanaIndexerConfigBuilder};
+    /// # use solana_indexer::{Poller, SolanaIndexerConfigBuilder};
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let config = SolanaIndexerConfigBuilder::new()
     ///     .with_rpc("http://127.0.0.1:8899")
@@ -154,15 +156,36 @@ impl Poller {
         let poll_interval = Duration::from_secs(self.config.poll_interval_secs);
         let mut interval = time::interval(poll_interval);
 
+        // Initialize fetcher and decoder
+        let fetcher = Fetcher::new(self.config.rpc_url.clone());
+        let decoder = Decoder::new();
+
+        println!("Starting poller with RPC: {}", self.config.rpc_url);
+        println!("Monitoring program: {}", self.config.program_id);
+
         loop {
             interval.tick().await;
 
             match self.fetch_new_signatures().await {
                 Ok(signatures) => {
                     if !signatures.is_empty() {
-                        // TODO: Integrate with fetcher, decoder, and handler pipeline
-                        // For now, just log the count
                         println!("Fetched {} new signatures", signatures.len());
+
+                        // Process each signature through the pipeline
+                        for signature in &signatures {
+                            match self
+                                .process_transaction(&fetcher, &decoder, signature)
+                                .await
+                            {
+                                Ok(()) => {
+                                    println!("✓ Processed transaction: {signature}");
+                                }
+                                Err(e) => {
+                                    eprintln!("✗ Error processing transaction {signature}: {e}");
+                                    // Continue processing other transactions
+                                }
+                            }
+                        }
                     }
                 }
                 Err(e) => {
@@ -172,6 +195,61 @@ impl Poller {
                 }
             }
         }
+    }
+
+    /// Processes a single transaction through the fetcher and decoder pipeline.
+    ///
+    /// # Arguments
+    ///
+    /// * `fetcher` - The fetcher instance for retrieving transaction data
+    /// * `decoder` - The decoder instance for parsing transaction data
+    /// * `signature` - The transaction signature to process
+    ///
+    /// # Errors
+    ///
+    /// Returns errors from fetching or decoding operations.
+    async fn process_transaction(
+        &self,
+        fetcher: &Fetcher,
+        decoder: &Decoder,
+        signature: &Signature,
+    ) -> Result<()> {
+        // Fetch transaction data
+        let transaction = fetcher.fetch_transaction(signature).await?;
+
+        // Decode transaction
+        let decoded = decoder.decode_transaction(&transaction)?;
+
+        // Log decoded information
+        println!("  Slot: {}", decoded.slot);
+        println!("  Instructions: {}", decoded.instructions.len());
+        println!("  Events: {}", decoded.events.len());
+
+        if let Some(compute_units) = decoded.compute_units_consumed {
+            println!("  Compute units: {compute_units}");
+        }
+
+        // Display instruction details
+        for instruction in &decoded.instructions {
+            println!(
+                "    - Instruction {}: {} ({})",
+                instruction.index, instruction.instruction_type, instruction.program_id
+            );
+        }
+
+        // Display event details
+        for event in &decoded.events {
+            println!("    - Event: {:?}", event.event_type);
+            if let Some(data) = &event.data {
+                println!("      Data: {}", data);
+            }
+        }
+
+        // TODO: Pass to idempotency tracker
+        // TODO: Pass to event handlers
+        // TODO: Mark as processed
+
+        Ok(())
     }
 }
 
