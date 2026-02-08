@@ -14,8 +14,6 @@ use std::str::FromStr;
 /// instances of this struct.
 #[derive(Debug, Clone)]
 pub struct SolanaIndexerConfig {
-
-
     /// Database connection URL (e.g., <postgresql://user:pass@localhost:5432/db>)
     pub database_url: String,
 
@@ -59,10 +57,7 @@ pub enum SourceConfig {
         reconnect_delay_secs: u64,
     },
     /// Helius-specific source (future proofing)
-    Helius {
-        api_key: String,
-        rpc_url: String,
-    },
+    Helius { api_key: String, rpc_url: String },
 }
 
 /// Builder for `SolanaIndexerConfig`.
@@ -119,7 +114,7 @@ impl SolanaIndexerConfigBuilder {
     #[must_use]
     pub fn with_rpc(mut self, url: impl Into<String>) -> Self {
         let url = url.into();
-        self.source = Some(SourceConfig::Rpc { 
+        self.source = Some(SourceConfig::Rpc {
             rpc_url: url,
             poll_interval_secs: self.poll_interval_secs.unwrap_or(5),
             batch_size: self.batch_size.unwrap_or(100),
@@ -128,14 +123,14 @@ impl SolanaIndexerConfigBuilder {
     }
 
     /// Sets the WebSocket source.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `ws_url` - The WebSocket URL
     /// * `rpc_url` - The RPC URL for fetching full transactions
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```no_run
     /// # use solana_indexer::SolanaIndexerConfigBuilder;
     /// let builder = SolanaIndexerConfigBuilder::new()
@@ -143,8 +138,8 @@ impl SolanaIndexerConfigBuilder {
     /// ```
     #[must_use]
     pub fn with_ws(mut self, ws_url: impl Into<String>, rpc_url: impl Into<String>) -> Self {
-        self.source = Some(SourceConfig::WebSocket { 
-            ws_url: ws_url.into(), 
+        self.source = Some(SourceConfig::WebSocket {
+            ws_url: ws_url.into(),
             rpc_url: rpc_url.into(),
             reconnect_delay_secs: 5, // Default
         });
@@ -206,7 +201,12 @@ impl SolanaIndexerConfigBuilder {
     pub fn with_poll_interval(mut self, secs: u64) -> Self {
         self.poll_interval_secs = Some(secs);
         // Update source if it's already set to Rpc
-        if let Some(SourceConfig::Rpc { rpc_url, batch_size, .. }) = &self.source {
+        if let Some(SourceConfig::Rpc {
+            rpc_url,
+            batch_size,
+            ..
+        }) = &self.source
+        {
             self.source = Some(SourceConfig::Rpc {
                 rpc_url: rpc_url.clone(),
                 poll_interval_secs: secs,
@@ -233,7 +233,12 @@ impl SolanaIndexerConfigBuilder {
     pub fn with_batch_size(mut self, size: usize) -> Self {
         self.batch_size = Some(size);
         // Update source if it's already set to Rpc
-        if let Some(SourceConfig::Rpc { rpc_url, poll_interval_secs, .. }) = &self.source {
+        if let Some(SourceConfig::Rpc {
+            rpc_url,
+            poll_interval_secs,
+            ..
+        }) = &self.source
+        {
             self.source = Some(SourceConfig::Rpc {
                 rpc_url: rpc_url.clone(),
                 poll_interval_secs: *poll_interval_secs,
@@ -282,7 +287,7 @@ impl SolanaIndexerConfigBuilder {
 
         // If source is not set, error out (or default? user said remove rpc_url, so we force setting it via with_rpc or with_ws)
         let source = self.source.ok_or_else(|| {
-             SolanaIndexerError::ConfigError("Source configuration (RPC or WebSocket) is required".to_string())
+             SolanaIndexerError::ConfigError("Source configuration (RPC or WebSocket) is required. Use .with_rpc() or .with_ws()".to_string())
         })?;
 
         Ok(SolanaIndexerConfig {
@@ -330,5 +335,38 @@ mod tests {
 
         assert_eq!(config.poll_interval_secs, 5);
         assert_eq!(config.batch_size, 100);
+
+        match config.source {
+            SourceConfig::Rpc {
+                rpc_url,
+                poll_interval_secs,
+                batch_size,
+            } => {
+                assert_eq!(rpc_url, "http://127.0.0.1:8899");
+                assert_eq!(poll_interval_secs, 5);
+                assert_eq!(batch_size, 100);
+            }
+            _ => panic!("Expected RPC source"),
+        }
+    }
+
+    #[test]
+    fn test_builder_websocket_config() {
+        let config = SolanaIndexerConfigBuilder::new()
+            .with_ws("ws://127.0.0.1:8900", "http://127.0.0.1:8899")
+            .with_database("postgresql://localhost/db")
+            .program_id("11111111111111111111111111111111")
+            .build()
+            .unwrap();
+
+        match config.source {
+            SourceConfig::WebSocket {
+                ws_url, rpc_url, ..
+            } => {
+                assert_eq!(ws_url, "ws://127.0.0.1:8900");
+                assert_eq!(rpc_url, "http://127.0.0.1:8899");
+            }
+            _ => panic!("Expected WebSocket source"),
+        }
     }
 }

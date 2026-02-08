@@ -9,11 +9,11 @@ use serde::Deserialize;
 use serde_json::json;
 use solana_sdk::{pubkey::Pubkey, signature::Signature};
 use std::str::FromStr;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
-use crate::common::error::{Result, SolanaIndexerError};
 use super::TransactionSource;
+use crate::common::error::{Result, SolanaIndexerError};
 
 /// WebSocket transaction source
 ///
@@ -75,11 +75,7 @@ impl WebSocketSource {
     /// * `ws_url` - WebSocket URL (e.g., "ws://127.0.0.1:8900")
     /// * `program_id` - Program ID to subscribe to
     /// * `reconnect_delay_secs` - Delay between reconnection attempts
-    pub fn new(
-        ws_url: impl Into<String>,
-        program_id: Pubkey,
-        reconnect_delay_secs: u64,
-    ) -> Self {
+    pub fn new(ws_url: impl Into<String>, program_id: Pubkey, reconnect_delay_secs: u64) -> Self {
         Self {
             ws_url: ws_url.into(),
             program_id,
@@ -98,9 +94,9 @@ impl WebSocketSource {
         );
 
         // Connect to WebSocket
-        let (ws_stream, _) = connect_async(&self.ws_url)
-            .await
-            .map_err(|e| SolanaIndexerError::RpcError(format!("WebSocket connection failed: {}", e)))?;
+        let (ws_stream, _) = connect_async(&self.ws_url).await.map_err(|e| {
+            SolanaIndexerError::RpcError(format!("WebSocket connection failed: {e}"))
+        })?;
 
         let (mut write, mut read) = ws_stream.split();
 
@@ -121,10 +117,13 @@ impl WebSocketSource {
         write
             .send(Message::Text(subscribe_request.to_string()))
             .await
-            .map_err(|e| SolanaIndexerError::RpcError(format!("Failed to send subscription: {}", e)))?;
+            .map_err(|e| {
+                SolanaIndexerError::RpcError(format!("Failed to send subscription: {e}"))
+            })?;
 
         // Wait for subscription confirmation
         let subscription_id = loop {
+            #[allow(clippy::collapsible_if)]
             if let Some(Ok(Message::Text(text))) = read.next().await {
                 if let Ok(response) = serde_json::from_str::<SubscriptionResponse>(&text) {
                     break response.result;
@@ -134,7 +133,7 @@ impl WebSocketSource {
 
         logging::log(
             logging::LogLevel::Success,
-            &format!("WebSocket subscribed (ID: {})", subscription_id),
+            &format!("WebSocket subscribed (ID: {subscription_id})"),
         );
 
         // Create channel for signatures
@@ -143,8 +142,11 @@ impl WebSocketSource {
         // Spawn background task to handle incoming messages
         tokio::spawn(async move {
             while let Some(Ok(Message::Text(text))) = read.next().await {
+                #[allow(clippy::collapsible_if)]
                 if let Ok(notification) = serde_json::from_str::<ProgramNotification>(&text) {
-                    if let Ok(sig) = Signature::from_str(&notification.params.result.value.signature) {
+                    if let Ok(sig) =
+                        Signature::from_str(&notification.params.result.value.signature)
+                    {
                         let _ = tx.send(sig);
                     }
                 }
@@ -208,15 +210,35 @@ impl TransactionSource for WebSocketSource {
 
                 Ok(signatures)
             }
-            WebSocketState::Disconnected => {
-                Err(SolanaIndexerError::InternalError(
-                    "WebSocket not connected".to_string(),
-                ))
-            }
+            WebSocketState::Disconnected => Err(SolanaIndexerError::InternalError(
+                "WebSocket not connected".to_string(),
+            )),
         }
     }
 
-    fn source_name(&self) -> &str {
+    fn source_name(&self) -> &'static str {
         "WebSocket"
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_websocket_source_creation() {
+        let ws_url = "ws://127.0.0.1:8900";
+        let program_id = Pubkey::new_unique();
+        let reconnect_delay = 5;
+
+        let source = WebSocketSource::new(ws_url, program_id, reconnect_delay);
+
+        assert_eq!(source.ws_url, ws_url);
+        assert_eq!(source.program_id, program_id);
+        assert_eq!(source.reconnect_delay_secs, reconnect_delay);
+
+        match source.state {
+            WebSocketState::Disconnected => assert!(true),
+            _ => panic!("Expected initially disconnected state"),
+        }
     }
 }

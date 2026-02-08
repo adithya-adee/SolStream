@@ -107,10 +107,10 @@
 //!
 //! 1. **Poller** - Fetches new transaction signatures from RPC
 //! 2. **Fetcher** - Retrieves full transaction details with parsed instructions
-//! 3. **DecoderRegistry** - Routes instructions to appropriate decoders
-//! 4. **InstructionDecoder** - Parses instructions into typed events
-//! 5. **HandlerRegistry** - Routes events to appropriate handlers
-//! 6. **EventHandler** - Processes events (database writes, webhooks, etc.)
+//! 3. **`DecoderRegistry`** - Routes instructions to appropriate decoders
+//! 4. **`InstructionDecoder`** - Parses instructions into typed events
+//! 5. **`HandlerRegistry`** - Routes events to appropriate handlers
+//! 6. **`EventHandler`** - Processes events (database writes, webhooks, etc.)
 //! 7. **Storage** - Tracks processed transactions for idempotency
 //!
 //! # Features

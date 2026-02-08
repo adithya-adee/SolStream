@@ -5,8 +5,8 @@
 //!
 //! The `TransactionSource` trait provides a unified interface for both approaches.
 
-use async_trait::async_trait;
 use crate::common::error::Result;
+use async_trait::async_trait;
 use solana_sdk::signature::Signature;
 
 /// Unified interface for transaction sources (Polling or WebSocket)
@@ -25,7 +25,7 @@ pub trait TransactionSource: Send + Sync {
     ///
     /// A vector of transaction signatures to process
     async fn next_batch(&mut self) -> Result<Vec<Signature>>;
-    
+
     /// Get a human-readable name for this source (for logging)
     fn source_name(&self) -> &str;
 }

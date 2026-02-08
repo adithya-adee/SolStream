@@ -26,6 +26,8 @@ use sqlx::PgPool;
 ///
 /// pub struct MyDecoder;
 ///
+/// pub struct MyEvent;
+///
 /// impl InstructionDecoder<MyEvent> for MyDecoder {
 ///     fn decode(&self, instruction: &UiInstruction) -> Option<MyEvent> {
 ///         // Parse instruction and return event if successful

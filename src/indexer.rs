@@ -3,6 +3,7 @@
 //! This module provides the `SolanaIndexer` struct that orchestrates the complete
 //! indexing pipeline: polling, fetching, decoding, deduplication, and event handling.
 
+use crate::common::config::SourceConfig;
 use crate::{
     common::{
         config::SolanaIndexerConfig,
@@ -12,10 +13,9 @@ use crate::{
     decoder::Decoder,
     decoder_registry::DecoderRegistry,
     fetcher::Fetcher,
-    sources::{websocket::WebSocketSource, TransactionSource},
+    sources::{TransactionSource, websocket::WebSocketSource},
     storage::Storage,
 };
-use crate::common::config::SourceConfig;
 use solana_sdk::signature::Signature;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -142,9 +142,8 @@ impl SolanaIndexer {
 
     /// Starts the indexer.
     ///
-    /// This method runs indefinitely, polling for new transactions,
-    /// fetching and decoding them, checking for duplicates, and
-    /// dispatching events to registered handlers.
+    /// This method runs indefinitely, fetching and processing transactions
+    /// based on the configured source (RPC polling or WebSocket subscription).
     pub async fn start(self) -> Result<()> {
         match &self.config.source {
             SourceConfig::Rpc { .. } => self.process_rpc_source().await,
@@ -153,9 +152,10 @@ impl SolanaIndexer {
         }
     }
 
+    /// Internal method to run the RPC polling loop.
     async fn process_rpc_source(self) -> Result<()> {
         use crate::common::logging;
-        
+
         // Display startup banner
         logging::log_startup(
             &self.config.program_id.to_string(),
@@ -195,6 +195,7 @@ impl SolanaIndexer {
         }
     }
 
+    /// Internal method to run the WebSocket subscription loop.
     async fn process_websocket_source(self) -> Result<()> {
         use crate::common::logging;
 
@@ -214,56 +215,70 @@ impl SolanaIndexer {
 
         // Extract WebSocket config
         let (ws_url, reconnect_delay) = match &self.config.source {
-            SourceConfig::WebSocket { ws_url, reconnect_delay_secs, .. } => (ws_url.clone(), *reconnect_delay_secs),
-            _ => return Err(crate::common::error::SolanaIndexerError::ConfigError("Invalid source config".to_string())),
+            SourceConfig::WebSocket {
+                ws_url,
+                reconnect_delay_secs,
+                ..
+            } => (ws_url.clone(), *reconnect_delay_secs),
+            _ => {
+                return Err(crate::common::error::SolanaIndexerError::ConfigError(
+                    "Invalid source config".to_string(),
+                ));
+            }
         };
 
-        logging::log(logging::LogLevel::Info, &format!("Starting indexer loop (WebSocket: {})...\n", ws_url));
+        logging::log(
+            logging::LogLevel::Info,
+            &format!("Starting indexer loop (WebSocket: {})...\n", ws_url),
+        );
 
         let mut source = WebSocketSource::new(ws_url, self.config.program_id, reconnect_delay);
 
         loop {
             match source.next_batch().await {
                 Ok(signatures) => {
-                     let start_time = std::time::Instant::now();
-                     let mut processed_count = 0;
+                    let start_time = std::time::Instant::now();
+                    let mut processed_count = 0;
 
-                     for signature in signatures {
-                         let sig_str = signature.to_string();
+                    for signature in signatures {
+                        let sig_str = signature.to_string();
 
-                         // Check if already processed (idempotency)
-                         if self.storage.is_processed(&sig_str).await? {
-                             continue;
-                         }
+                        // Check if already processed (idempotency)
+                        if self.storage.is_processed(&sig_str).await? {
+                            continue;
+                        }
 
-                         // Process transaction
-                         match self.process_transaction(&signature).await {
-                             Ok(()) => {
-                                 processed_count += 1;
-                             }
-                             Err(e) => {
-                                 logging::log_error("Transaction error", &format!("{sig_str}: {e}"));
-                             }
-                         }
-                     }
+                        // Process transaction
+                        match self.process_transaction(&signature).await {
+                            Ok(()) => {
+                                processed_count += 1;
+                            }
+                            Err(e) => {
+                                logging::log_error("Transaction error", &format!("{sig_str}: {e}"));
+                            }
+                        }
+                    }
 
-                     if processed_count > 0 {
+                    if processed_count > 0 {
                         let duration_ms = start_time.elapsed().as_millis() as u64;
                         logging::log_batch(processed_count, processed_count, duration_ms);
-                     }
+                    }
                 }
                 Err(e) => {
-                     logging::log_error("WebSocket error", &e.to_string());
-                     tokio::time::sleep(Duration::from_secs(reconnect_delay)).await;
+                    logging::log_error("WebSocket error", &e.to_string());
+                    tokio::time::sleep(Duration::from_secs(reconnect_delay)).await;
                 }
             }
         }
     }
 
+    #[allow(clippy::unused_async)]
     async fn process_helius_source(self) -> Result<()> {
         use crate::common::logging;
         logging::log_error("Helius source", "Not implemented yet");
-        Err(crate::common::error::SolanaIndexerError::ConfigError("Helius source not implemented".to_string()))
+        Err(crate::common::error::SolanaIndexerError::ConfigError(
+            "Helius source not implemented".to_string(),
+        ))
     }
 
     async fn poll_and_process(&self, last_signature: &mut Option<Signature>) -> Result<usize> {
@@ -390,9 +405,39 @@ impl SolanaIndexer {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn test_indexer_creation() {
-        // Basic struct instantiation test
-        assert!(true);
+    use super::*;
+    use crate::common::config::SolanaIndexerConfigBuilder;
+
+    #[tokio::test]
+    async fn test_indexer_creation_rpc() {
+        let config = SolanaIndexerConfigBuilder::new()
+            .with_rpc("http://127.0.0.1:8899")
+            .with_database("postgresql://localhost/db")
+            .program_id("11111111111111111111111111111111")
+            .build()
+            .unwrap();
+
+        // We can't fully instantiate SolanaIndexer without a real DB, so we verify config
+        assert_eq!(config.rpc_url(), "http://127.0.0.1:8899");
+        match config.source {
+            SourceConfig::Rpc { .. } => assert!(true),
+            _ => panic!("Expected RPC source"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_indexer_creation_ws() {
+        let config = SolanaIndexerConfigBuilder::new()
+            .with_ws("ws://127.0.0.1:8900", "http://127.0.0.1:8899")
+            .with_database("postgresql://localhost/db")
+            .program_id("11111111111111111111111111111111")
+            .build()
+            .unwrap();
+
+        assert_eq!(config.rpc_url(), "http://127.0.0.1:8899");
+        match config.source {
+            SourceConfig::WebSocket { ws_url, .. } => assert_eq!(ws_url, "ws://127.0.0.1:8900"),
+            _ => panic!("Expected WebSocket source"),
+        }
     }
 }
