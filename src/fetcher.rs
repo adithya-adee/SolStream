@@ -108,9 +108,7 @@ impl Fetcher {
             rpc_client
                 .get_transaction(&sig, UiTransactionEncoding::Json)
                 .map_err(|e| {
-                    SolanaIndexerError::RpcError(format!(
-                        "Failed to fetch transaction {sig}: {e}"
-                    ))
+                    SolanaIndexerError::RpcError(format!("Failed to fetch transaction {sig}: {e}"))
                 })
         })
         .await

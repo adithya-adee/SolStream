@@ -54,19 +54,19 @@
 
 // Public API exports
 pub use config::{SolanaIndexerConfig, SolanaIndexerConfigBuilder};
-pub use decoder::{Decoder, DecodedTransaction, EventType, InstructionInfo, ParsedEvent};
+pub use decoder::{DecodedTransaction, Decoder, EventType, InstructionInfo, ParsedEvent};
 pub use error::{Result, SolanaIndexerError};
 pub use fetcher::Fetcher;
 pub use indexer::SolanaIndexer;
 pub use macros::{
-    generate_event_struct, idl_type_to_rust, Idl, IdlAccount, IdlAccountItem, IdlEvent,
-    IdlField, IdlInstruction, IdlType, IdlTypeDefinition,
+    Idl, IdlAccount, IdlAccountItem, IdlEvent, IdlField, IdlInstruction, IdlType,
+    IdlTypeDefinition, generate_event_struct, idl_type_to_rust,
 };
 pub use sources::poller::Poller;
 pub use storage::Storage;
 pub use traits::{DynamicEventHandler, EventHandler, HandlerRegistry};
 pub use types::{
-    calculate_discriminator, DepositEvent, EventDiscriminator, TransferEvent, WithdrawEvent,
+    DepositEvent, EventDiscriminator, TransferEvent, WithdrawEvent, calculate_discriminator,
 };
 
 // Module declarations

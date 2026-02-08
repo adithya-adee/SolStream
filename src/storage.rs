@@ -216,11 +216,10 @@ impl Storage {
     /// # }
     /// ```
     pub async fn get_last_processed_slot(&self) -> Result<Option<u64>> {
-        let result = sqlx::query_scalar::<_, Option<i64>>(
-            "SELECT MAX(slot) FROM _solana_indexer_processed",
-        )
-        .fetch_one(&self.pool)
-        .await?;
+        let result =
+            sqlx::query_scalar::<_, Option<i64>>("SELECT MAX(slot) FROM _solana_indexer_processed")
+                .fetch_one(&self.pool)
+                .await?;
 
         Ok(result.map(|s| s as u64))
     }

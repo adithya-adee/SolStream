@@ -10,7 +10,7 @@ use crate::{
 use solana_sdk::signature::Signature;
 use std::str::FromStr;
 use std::sync::Arc;
-use tokio::time::{interval, Duration};
+use tokio::time::{Duration, interval};
 
 /// Main indexer that orchestrates the complete pipeline.
 ///
@@ -160,10 +160,7 @@ impl SolanaIndexer {
         println!("Starting Solana Indexer...");
         println!("Program ID: {}", self.config.program_id);
         println!("RPC URL: {}", self.config.rpc_url);
-        println!(
-            "Poll interval: {} seconds",
-            self.config.poll_interval_secs
-        );
+        println!("Poll interval: {} seconds", self.config.poll_interval_secs);
 
         let mut poll_interval = interval(Duration::from_secs(self.config.poll_interval_secs));
         let mut last_signature: Option<Signature> = None;
@@ -224,10 +221,7 @@ impl SolanaIndexer {
         Ok(processed_count)
     }
 
-    async fn fetch_signatures(
-        &self,
-        last_signature: &Option<Signature>,
-    ) -> Result<Vec<Signature>> {
+    async fn fetch_signatures(&self, last_signature: &Option<Signature>) -> Result<Vec<Signature>> {
         use solana_client::rpc_client::RpcClient;
         use solana_sdk::commitment_config::CommitmentConfig;
 

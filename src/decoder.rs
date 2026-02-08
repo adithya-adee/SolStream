@@ -244,19 +244,15 @@ impl Decoder {
         let instructions = self.extract_instructions(&transaction.transaction.transaction)?;
 
         // Extract compute units consumed
-        let compute_units_consumed = transaction
-            .transaction
-            .meta
-            .as_ref()
-            .and_then(|meta| {
-                // Handle the OptionSerializer type
-                match meta.compute_units_consumed {
-                    solana_transaction_status::option_serializer::OptionSerializer::Some(units) => {
-                        Some(units)
-                    }
-                    _ => None,
+        let compute_units_consumed = transaction.transaction.meta.as_ref().and_then(|meta| {
+            // Handle the OptionSerializer type
+            match meta.compute_units_consumed {
+                solana_transaction_status::option_serializer::OptionSerializer::Some(units) => {
+                    Some(units)
                 }
-            });
+                _ => None,
+            }
+        });
 
         Ok(DecodedTransaction {
             slot: transaction.slot,

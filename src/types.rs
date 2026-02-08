@@ -208,7 +208,7 @@ mod tests {
     fn test_calculate_discriminator() {
         let discriminator = calculate_discriminator("TestEvent");
         assert_eq!(discriminator.len(), 8);
-        
+
         // Discriminator should be deterministic
         let discriminator2 = calculate_discriminator("TestEvent");
         assert_eq!(discriminator, discriminator2);
@@ -238,7 +238,7 @@ mod tests {
     fn test_transfer_event_discriminator() {
         let discriminator = TransferEvent::discriminator();
         assert_eq!(discriminator.len(), 8);
-        
+
         // Should match manual calculation
         let expected = calculate_discriminator("TransferEvent");
         assert_eq!(discriminator, expected);
@@ -261,7 +261,7 @@ mod tests {
     fn test_deposit_event_discriminator() {
         let discriminator = DepositEvent::discriminator();
         assert_eq!(discriminator.len(), 8);
-        
+
         let expected = calculate_discriminator("DepositEvent");
         assert_eq!(discriminator, expected);
     }
@@ -283,7 +283,7 @@ mod tests {
     fn test_withdraw_event_discriminator() {
         let discriminator = WithdrawEvent::discriminator();
         assert_eq!(discriminator.len(), 8);
-        
+
         let expected = calculate_discriminator("WithdrawEvent");
         assert_eq!(discriminator, expected);
     }

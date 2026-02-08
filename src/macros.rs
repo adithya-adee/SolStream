@@ -277,12 +277,12 @@ pub fn idl_type_to_rust(idl_type: &str) -> String {
 #[must_use]
 pub fn generate_event_struct(event: &IdlEvent) -> String {
     let mut code = String::new();
-    
+
     code.push_str(&format!(
         "#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, BorshSerialize, BorshDeserialize)]\n"
     ));
     code.push_str(&format!("pub struct {} {{\n", event.name));
-    
+
     for field in &event.fields {
         let rust_type = match &field.ty {
             IdlType::Simple(s) => idl_type_to_rust(s),
@@ -290,7 +290,7 @@ pub fn generate_event_struct(event: &IdlEvent) -> String {
         };
         code.push_str(&format!("    pub {}: {},\n", field.name, rust_type));
     }
-    
+
     code.push_str("}\n");
     code
 }

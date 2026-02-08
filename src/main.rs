@@ -14,10 +14,7 @@ async fn main() -> Result<()> {
 
     // Build configuration from environment variables
     let config = SolanaIndexerConfigBuilder::new()
-        .with_rpc(
-            std::env::var("RPC_URL")
-                .unwrap_or_else(|_| "http://127.0.0.1:8899".to_string()),
-        )
+        .with_rpc(std::env::var("RPC_URL").unwrap_or_else(|_| "http://127.0.0.1:8899".to_string()))
         .with_database(
             std::env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "postgresql://localhost/solana_indexer".to_string()),

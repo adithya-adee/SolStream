@@ -134,12 +134,7 @@ pub trait DynamicEventHandler: Send + Sync {
     /// # Errors
     ///
     /// Returns `SolanaIndexerError` if handling fails.
-    async fn handle_dynamic(
-        &self,
-        event_data: &[u8],
-        db: &PgPool,
-        signature: &str,
-    ) -> Result<()>;
+    async fn handle_dynamic(&self, event_data: &[u8], db: &PgPool, signature: &str) -> Result<()>;
 
     /// Returns the event discriminator this handler processes.
     fn discriminator(&self) -> [u8; 8];
@@ -196,11 +191,7 @@ impl HandlerRegistry {
     /// let mut registry = HandlerRegistry::new();
     /// // registry.register([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08], handler);
     /// ```
-    pub fn register(
-        &mut self,
-        discriminator: [u8; 8],
-        handler: Box<dyn DynamicEventHandler>,
-    ) {
+    pub fn register(&mut self, discriminator: [u8; 8], handler: Box<dyn DynamicEventHandler>) {
         self.handlers.insert(discriminator, handler);
     }
 
@@ -227,7 +218,7 @@ impl HandlerRegistry {
     /// let registry = HandlerRegistry::new();
     /// let discriminator = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
     /// let event_data = b"event data";
-    /// 
+    ///
     /// // registry.handle(&discriminator, event_data, db, "signature").await?;
     /// # Ok(())
     /// # }
@@ -343,10 +334,10 @@ mod tests {
     fn test_handler_registry_register() {
         let mut registry = HandlerRegistry::new();
         let discriminator = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
-        
+
         let handler = Box::new(MockDynamicHandler { discriminator });
         registry.register(discriminator, handler);
-        
+
         assert_eq!(registry.len(), 1);
         assert!(!registry.is_empty());
     }
@@ -355,12 +346,12 @@ mod tests {
     async fn test_handler_registry_handle_not_found() {
         let registry = HandlerRegistry::new();
         let discriminator = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
-        
+
         // Create a mock database pool (this will fail in tests without a real DB)
         // For now, we'll just test the error case
         let db_url = "postgresql://localhost/test";
         let pool = sqlx::PgPool::connect(db_url).await;
-        
+
         // If we can't connect, that's fine for this test - we're testing the registry logic
         if let Ok(db) = pool {
             let result = registry.handle(&discriminator, b"data", &db, "sig").await;

@@ -107,7 +107,9 @@ impl Poller {
 
             rpc_client
                 .get_signatures_for_address_with_config(&program_id, config)
-                .map_err(|e| SolanaIndexerError::RpcError(format!("Failed to fetch signatures: {e}")))
+                .map_err(|e| {
+                    SolanaIndexerError::RpcError(format!("Failed to fetch signatures: {e}"))
+                })
         })
         .await
         .map_err(|e| SolanaIndexerError::InternalError(format!("Task join error: {e}")))??;

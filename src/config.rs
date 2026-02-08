@@ -189,9 +189,9 @@ impl SolanaIndexerConfigBuilder {
             .rpc_url
             .ok_or_else(|| SolanaIndexerError::ConfigError("RPC URL is required".to_string()))?;
 
-        let database_url = self
-            .database_url
-            .ok_or_else(|| SolanaIndexerError::ConfigError("Database URL is required".to_string()))?;
+        let database_url = self.database_url.ok_or_else(|| {
+            SolanaIndexerError::ConfigError("Database URL is required".to_string())
+        })?;
 
         let program_id_str = self
             .program_id
