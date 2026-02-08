@@ -144,31 +144,40 @@ impl SolanaIndexer {
     /// fetching and decoding them, checking for duplicates, and
     /// dispatching events to registered handlers.
     pub async fn start(self) -> Result<()> {
-        println!("Starting Solana Indexer...");
-        println!("Program ID: {}", self.config.program_id);
-        println!("RPC URL: {}", self.config.rpc_url);
-
-        println!("Poll interval: {} seconds", self.config.poll_interval_secs);
+        use crate::common::logging;
+        
+        // Display startup banner
+        logging::log_startup(
+            &self.config.program_id.to_string(),
+            &self.config.rpc_url,
+            self.config.poll_interval_secs,
+        );
 
         // Run schema initializers
         for initializer in &self.schema_initializers {
+            logging::log(logging::LogLevel::Info, "Initializing database schema...");
             initializer.initialize(self.storage.pool()).await?;
         }
+        logging::log(logging::LogLevel::Success, "Database schema initialized");
 
         let mut poll_interval = interval(Duration::from_secs(self.config.poll_interval_secs));
         let mut last_signature: Option<Signature> = None;
 
+        logging::log(logging::LogLevel::Info, "Starting indexer loop...\n");
+
         loop {
             poll_interval.tick().await;
 
+            let start_time = std::time::Instant::now();
             match self.poll_and_process(&mut last_signature).await {
                 Ok(processed) => {
                     if processed > 0 {
-                        println!("Processed {processed} new transactions");
+                        let duration_ms = start_time.elapsed().as_millis() as u64;
+                        logging::log_batch(processed, processed, duration_ms);
                     }
                 }
                 Err(e) => {
-                    eprintln!("Error in indexing loop: {e}");
+                    logging::log_error("Indexing error", &e.to_string());
                     // Continue polling despite errors
                     tokio::time::sleep(Duration::from_secs(5)).await;
                 }
@@ -289,12 +298,9 @@ impl SolanaIndexer {
             .mark_processed(&sig_str, transaction.slot)
             .await?;
 
-        // Log processing
+        // Log processing with colorful output
         if events_processed > 0 {
-            println!(
-                "✅ Processed tx {} (slot {}, {} events)",
-                sig_str, decoded_meta.slot, events_processed
-            );
+            crate::common::logging::log_transaction(&sig_str, decoded_meta.slot, events_processed);
         }
 
         Ok(())

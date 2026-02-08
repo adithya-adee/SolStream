@@ -6,48 +6,121 @@
 //!
 //! # Quick Start
 //!
+//! ## Basic System Transfer Indexer
+//!
 //! ```no_run
-//! use solana_indexer::{SolanaIndexerConfigBuilder, Poller};
-//! use std::env;
+//! use async_trait::async_trait;
+//! use borsh::{BorshDeserialize, BorshSerialize};
+//! use solana_indexer::{
+//!     SolanaIndexer, SolanaIndexerConfigBuilder,
+//!     InstructionDecoder, EventHandler, EventDiscriminator,
+//!     calculate_discriminator, SolanaIndexerError,
+//! };
+//! use solana_sdk::pubkey::Pubkey;
+//! use solana_transaction_status::{UiInstruction, UiParsedInstruction};
+//! use sqlx::PgPool;
+//!
+//! // Define your event structure
+//! #[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
+//! pub struct TransferEvent {
+//!     pub from: Pubkey,
+//!     pub to: Pubkey,
+//!     pub amount: u64,
+//! }
+//!
+//! impl EventDiscriminator for TransferEvent {
+//!     fn discriminator() -> [u8; 8] {
+//!         calculate_discriminator("TransferEvent")
+//!     }
+//! }
+//!
+//! // Implement decoder
+//! pub struct TransferDecoder;
+//!
+//! impl InstructionDecoder<TransferEvent> for TransferDecoder {
+//!     fn decode(&self, instruction: &UiInstruction) -> Option<TransferEvent> {
+//!         // Parse instruction and return event
+//!         // See examples/system_transfer_indexer.rs for full implementation
+//!         None
+//!     }
+//! }
+//!
+//! // Implement handler
+//! pub struct TransferHandler;
+//!
+//! #[async_trait]
+//! impl EventHandler<TransferEvent> for TransferHandler {
+//!     async fn handle(
+//!         &self,
+//!         event: TransferEvent,
+//!         db: &PgPool,
+//!         signature: &str,
+//!     ) -> Result<(), SolanaIndexerError> {
+//!         println!("Transfer: {} -> {} ({} lamports)", event.from, event.to, event.amount);
+//!         Ok(())
+//!     }
+//! }
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     // Load environment variables
 //!     dotenvy::dotenv().ok();
 //!
-//!     // Configure SolanaIndexer
+//!     // Build configuration
 //!     let config = SolanaIndexerConfigBuilder::new()
-//!         .with_rpc(env::var("RPC_URL")?)
-//!         .with_database(env::var("DATABASE_URL")?)
-//!         .program_id(env::var("PROGRAM_ID")?)
+//!         .with_rpc(std::env::var("RPC_URL")?)
+//!         .with_database(std::env::var("DATABASE_URL")?)
+//!         .program_id("11111111111111111111111111111111") // System Program
+//!         .with_poll_interval(2)
+//!         .with_batch_size(10)
 //!         .build()?;
 //!
-//!     // Create and start poller
-//!     let mut poller = Poller::new(config);
-//!     poller.start().await?;
+//!     // Create indexer
+//!     let mut indexer = SolanaIndexer::new(config).await?;
 //!
+//!     // Register decoder
+//!     indexer.decoder_registry_mut().register(
+//!         "system".to_string(),
+//!         Box::new(Box::new(TransferDecoder) as Box<dyn InstructionDecoder<TransferEvent>>),
+//!     );
+//!
+//!     // Register handler
+//!     let handler: Box<dyn EventHandler<TransferEvent>> = Box::new(TransferHandler);
+//!     indexer.handler_registry_mut().register(
+//!         TransferEvent::discriminator(),
+//!         Box::new(handler),
+//!     );
+//!
+//!     // Start indexing
+//!     indexer.start().await?;
 //!     Ok(())
 //! }
 //! ```
+//!
+//! ## See Also
+//!
+//! - `examples/system_transfer_indexer.rs` - Complete working example
+//! - `examples/spl_token_indexer.rs` - SPL token transfer indexing
 //!
 //! # Architecture
 //!
 //! `SolanaIndexer` operates on an event-driven pipeline:
 //!
-//! 1. **Input Source** - Acquires transaction signatures (Poller or WebSocket)
-//! 2. **Fetcher** - Retrieves full transaction details
-//! 3. **Decoder** - Parses transactions using IDL-generated types
-//! 4. **Idempotency Tracker** - Prevents duplicate processing
-//! 5. **Handler** - Executes custom business logic
-//! 6. **Persistence** - Marks transactions as processed
+//! 1. **Poller** - Fetches new transaction signatures from RPC
+//! 2. **Fetcher** - Retrieves full transaction details with parsed instructions
+//! 3. **DecoderRegistry** - Routes instructions to appropriate decoders
+//! 4. **InstructionDecoder** - Parses instructions into typed events
+//! 5. **HandlerRegistry** - Routes events to appropriate handlers
+//! 6. **EventHandler** - Processes events (database writes, webhooks, etc.)
+//! 7. **Storage** - Tracks processed transactions for idempotency
 //!
 //! # Features
 //!
-//! - **Type-Safe Configuration**: Builder pattern with compile-time validation
-//! - **IDL-Driven Development**: Automatic Rust type generation from Solana IDLs
-//! - **Flexible Input Sources**: Polling for localnet, WebSocket for production
-//! - **Comprehensive Error Handling**: Rich error types with context
-//! - **Environment Variable Integration**: Seamless `.env` file support
+//! - **Type-Safe Event Handling**: Compile-time guarantees for event structures
+//! - **Multi-Program Support**: Index multiple programs simultaneously
+//! - **Idempotency**: Automatic deduplication via transaction signatures
+//! - **Flexible Decoders**: Custom instruction parsing logic
+//! - **Database Integration**: Built-in PostgreSQL support with SQLx
+//! - **Production Ready**: Colorful logging, error recovery, metrics
 
 #![warn(clippy::all, clippy::pedantic)]
 #![allow(clippy::module_name_repetitions)]
