@@ -80,7 +80,7 @@ The SDK implements a complete event-driven pipeline:
                     │  Storage (Idempotency Tracking)  │
                     └──────────────────────────────────┘
 ```
-
+README
 ### Core Components
 
 1. **Poller**: Monitors program accounts for new transactions
@@ -242,5 +242,5 @@ Built with:
 ## Support
 
 - **Documentation**: [docs.rs/solana-indexer](https://docs.rs/solana-indexer)
-- **Issues**: [GitHub Issues](https://github.com/yourusername/solana-indexer/issues)
+- **Issues**: [GitHub Issues](https://github.com/adithya-adee/solana-indexer/issues)
 - **Discord**: [Join our community](https://discord.gg/yourserver)
