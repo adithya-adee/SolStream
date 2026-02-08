@@ -139,6 +139,21 @@ pub trait EventHandler<T>: Send + Sync + 'static {
     *   `signature: &str`: The transaction signature, useful for logging, linking, or debugging.
 *   **SDK Invocation:** The SolanaIndexer core loop, after decoding a transaction and identifying an event of type `T`, automatically finds the developer-registered `EventHandler<T>` instance and calls its `handle` method. This abstraction means developers only focus on *what* to do with the data, not *how* to acquire or decode it.
 
+### Custom Database Schemas (SchemaInitializer)
+
+In addition to event handling, developers can define custom database tables tailored to their application's needs using the `SchemaInitializer` trait.
+
+```rust
+#[async_trait]
+pub trait SchemaInitializer: Send + Sync {
+    async fn initialize(&self, db: &PgPool) -> Result<()>;
+}
+```
+
+*   **Custom Setup:** Implement this trait to execute SQL commands (e.g., `CREATE TABLE IF NOT EXISTS`) when the indexer starts.
+*   **Registration:** Register your initializer via `.register_schema_initializer(Box::new(MyInitializer))`.
+*   **Automatic Execution:** The indexer ensures these initializations run during startup, guaranteeing that required tables exist before processing begins.
+
 ## 6. Reliability & Error Handling
 
 Reliability is paramount for an indexing solution. SolanaIndexer implements robust mechanisms to ensure data integrity and system stability.
@@ -195,17 +210,22 @@ solana-indexer/
 │   └── your_program.json          // Developer drops IDL here (e.g., from Anchor)
 ├── src/
 │   ├── lib.rs                     // Public API and main entry point
-│   ├── config.rs                  // SolanaIndexerConfig and builder logic
-│   ├── input_sources/             // Poller and future Subscriber implementations
-│   │   ├── poller.rs
+│   ├── common/                    // Shared utilities and core types
+│   │   ├── config.rs              // SolanaIndexerConfig
+│   │   ├── error.rs               // SolanaIndexerError enum
+│   │   ├── macros.rs              // Procedural macro for IDL compilation
+│   │   ├── traits.rs              // EventHandler and SchemaInitializer traits
+│   │   ├── types.rs               // Core event types
+│   │   └── mod.rs                 // Module exports
+│   ├── sources/                   // Input source implementations
+│   │   ├── mod.rs
+│   │   └── poller.rs              // Poller implementation
 │   │   └── websocket.rs           // (Future)
 │   ├── fetcher.rs                 // Logic for fetching full transaction data
 │   ├── decoder.rs                 // IDL-driven and generic data parsing
-│   ├── tracker.rs                 // Idempotency tracking logic
-│   ├── traits.rs                  // EventHandler trait definition
-│   ├── error.rs                   // SolanaIndexerError enum definition
-│   ├── storage.rs                 // Database interaction utilities (e.g., SQLx)
-│   └── macros/                    // Procedural macro for IDL compilation
+│   ├── indexer.rs                 // Main orchestrator logic
+│   ├── storage.rs                 // Database interaction and idempotency
+│   └── generator/                 // Transaction generator for testing
 └── examples/
     └── token_transfer_indexer.rs  // Demo implementation of an EventHandler
 ```

@@ -296,10 +296,12 @@ mod tests {
     use super::*;
 
     #[derive(Debug, Clone)]
+    #[allow(dead_code)]
     struct TestEvent {
         value: u64,
     }
 
+    #[allow(dead_code)]
     struct TestHandler;
 
     #[async_trait]
