@@ -4,7 +4,7 @@
 //! type-safe Rust objects. It supports IDL-driven decoding for program-specific
 //! events and instructions, as well as common Solana instruction types.
 
-use crate::error::{Result, SolanaIndexerError};
+use crate::common::error::{Result, SolanaIndexerError};
 use solana_sdk::pubkey::Pubkey;
 use solana_transaction_status::{
     EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction, UiInstruction, UiMessage,

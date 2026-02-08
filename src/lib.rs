@@ -53,30 +53,27 @@
 #![allow(clippy::module_name_repetitions)]
 
 // Public API exports
-pub use config::{SolanaIndexerConfig, SolanaIndexerConfigBuilder};
-pub use decoder::{DecodedTransaction, Decoder, EventType, InstructionInfo, ParsedEvent};
-pub use error::{Result, SolanaIndexerError};
-pub use fetcher::Fetcher;
-pub use indexer::SolanaIndexer;
-pub use macros::{
+// Public API exports
+pub use common::config::{SolanaIndexerConfig, SolanaIndexerConfigBuilder};
+pub use common::error::{Result, SolanaIndexerError};
+pub use common::macros::{
     Idl, IdlAccount, IdlAccountItem, IdlEvent, IdlField, IdlInstruction, IdlType,
     IdlTypeDefinition, generate_event_struct, idl_type_to_rust,
 };
-pub use sources::poller::Poller;
-pub use storage::Storage;
-pub use traits::{DynamicEventHandler, EventHandler, HandlerRegistry};
-pub use types::{
+pub use common::traits::{DynamicEventHandler, EventHandler, HandlerRegistry, SchemaInitializer};
+pub use common::types::{
     DepositEvent, EventDiscriminator, TransferEvent, WithdrawEvent, calculate_discriminator,
 };
+pub use decoder::{DecodedTransaction, Decoder, EventType, InstructionInfo, ParsedEvent};
+pub use fetcher::Fetcher;
+pub use indexer::SolanaIndexer;
+pub use sources::poller::Poller;
+pub use storage::Storage;
 
 // Module declarations
-pub mod config;
+pub mod common;
 pub mod decoder;
-pub mod error;
 pub mod fetcher;
 pub mod indexer;
-pub mod macros;
 pub mod sources;
 pub mod storage;
-pub mod traits;
-pub mod types;

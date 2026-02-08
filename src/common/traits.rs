@@ -4,9 +4,23 @@
 //! the `EventHandler` trait. Developers implement this trait to define custom
 //! business logic for processing decoded events and transactions.
 
-use crate::error::{Result, SolanaIndexerError};
+use crate::common::error::{Result, SolanaIndexerError};
 use async_trait::async_trait;
 use sqlx::PgPool;
+
+/// Trait for initializing custom database schemas.
+///
+/// Implement this trait to define custom table creation logic that runs
+/// when the indexer starts.
+#[async_trait]
+pub trait SchemaInitializer: Send + Sync {
+    /// Initializes the database schema.
+    ///
+    /// # Arguments
+    ///
+    /// * `db` - Database connection pool
+    async fn initialize(&self, db: &PgPool) -> Result<()>;
+}
 
 /// Event handler trait for processing decoded events.
 ///

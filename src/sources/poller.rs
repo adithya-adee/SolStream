@@ -3,9 +3,9 @@
 //! This module implements a polling strategy that periodically queries
 //! Solana RPC endpoints for new transaction signatures.
 
-use crate::config::SolanaIndexerConfig;
+use crate::common::config::SolanaIndexerConfig;
 use crate::decoder::Decoder;
-use crate::error::{Result, SolanaIndexerError};
+use crate::common::error::{Result, SolanaIndexerError};
 use crate::fetcher::Fetcher;
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::commitment_config::CommitmentConfig;

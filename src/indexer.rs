@@ -4,13 +4,19 @@
 //! indexing pipeline: polling, fetching, decoding, deduplication, and event handling.
 
 use crate::{
-    config::SolanaIndexerConfig, decoder::Decoder, error::Result, fetcher::Fetcher,
-    storage::Storage, traits::HandlerRegistry,
+    common::{
+        config::SolanaIndexerConfig,
+        error::Result,
+        traits::{HandlerRegistry, SchemaInitializer},
+    },
+    decoder::Decoder,
+    fetcher::Fetcher,
+    storage::Storage,
 };
 use solana_sdk::signature::Signature;
 use std::str::FromStr;
 use std::sync::Arc;
-use tokio::time::{Duration, interval};
+use tokio::time::{interval, Duration};
 
 /// Main indexer that orchestrates the complete pipeline.
 ///
@@ -41,6 +47,7 @@ pub struct SolanaIndexer {
     fetcher: Arc<Fetcher>,
     decoder: Arc<Decoder>,
     handler_registry: Arc<HandlerRegistry>,
+    schema_initializers: Vec<Box<dyn SchemaInitializer>>,
 }
 
 impl SolanaIndexer {
@@ -83,6 +90,7 @@ impl SolanaIndexer {
             fetcher,
             decoder,
             handler_registry,
+            schema_initializers: Vec::new(),
         })
     }
 
@@ -107,6 +115,15 @@ impl SolanaIndexer {
     #[must_use]
     pub fn handler_registry(&self) -> &HandlerRegistry {
         &self.handler_registry
+    }
+
+    /// Registers a schema initializer.
+    ///
+    /// # Arguments
+    ///
+    /// * `initializer` - The initializer implementation
+    pub fn register_schema_initializer(&mut self, initializer: Box<dyn SchemaInitializer>) {
+        self.schema_initializers.push(initializer);
     }
 
     /// Returns a reference to the decoder for registering event discriminators.
@@ -160,7 +177,13 @@ impl SolanaIndexer {
         println!("Starting Solana Indexer...");
         println!("Program ID: {}", self.config.program_id);
         println!("RPC URL: {}", self.config.rpc_url);
+
         println!("Poll interval: {} seconds", self.config.poll_interval_secs);
+
+        // Run schema initializers
+        for initializer in &self.schema_initializers {
+            initializer.initialize(self.storage.pool()).await?;
+        }
 
         let mut poll_interval = interval(Duration::from_secs(self.config.poll_interval_secs));
         let mut last_signature: Option<Signature> = None;
@@ -243,7 +266,7 @@ impl SolanaIndexer {
                         commitment: Some(CommitmentConfig::confirmed()),
                     },
                 )
-                .map_err(|e| crate::error::SolanaIndexerError::RpcError(e.to_string()))?;
+                .map_err(|e| crate::common::error::SolanaIndexerError::RpcError(e.to_string()))?;
 
             let signatures: Vec<Signature> = sigs
                 .into_iter()
@@ -253,7 +276,7 @@ impl SolanaIndexer {
             Ok(signatures)
         })
         .await
-        .map_err(|e| crate::error::SolanaIndexerError::InternalError(e.to_string()))?
+        .map_err(|e| crate::common::error::SolanaIndexerError::InternalError(e.to_string()))?
     }
 
     async fn process_transaction(&self, signature: &Signature) -> Result<()> {
