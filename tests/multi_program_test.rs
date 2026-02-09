@@ -33,7 +33,7 @@ async fn setup_rpc_mocks(mock_server: &MockServer) {
 }
 
 #[tokio::test]
-#[ignore = "Requires DATABASE_URL environment variable"]
+
 async fn test_multi_program_indexing() {
     dotenvy::dotenv().ok();
 

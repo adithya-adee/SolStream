@@ -213,10 +213,15 @@ CREATE INDEX idx_processed_slot ON _solana_indexer_processed(slot);
  cargo tarpaulin --out Html --output-dir coverage
  ```
  
- **Using cargo-llvm-cov (Local Development):
+ **Using cargo alias (Recommended):**
  ```bash
- cargo install cargo-llvm-cov
- cargo llvm-cov --html --open
+ # Compile and run coverage
+ cargo coverage
+ ```
+ 
+ ```bash
+ # Generate detailed report
+ cargo report
  ```
  
  ### Continuous Integration

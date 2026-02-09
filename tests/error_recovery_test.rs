@@ -34,7 +34,7 @@ async fn setup_rpc_mocks(mock_server: &MockServer) {
 }
 
 #[tokio::test]
-#[ignore = "Requires DATABASE_URL environment variable"]
+
 async fn test_rpc_error_recovery() {
     dotenvy::dotenv().ok();
 
@@ -92,7 +92,7 @@ async fn test_rpc_error_recovery() {
 }
 
 #[tokio::test]
-#[ignore = "Requires DATABASE_URL environment variable"]
+
 async fn test_idempotency_duplicate_transactions() {
     dotenvy::dotenv().ok();
 
@@ -207,7 +207,7 @@ async fn test_idempotency_duplicate_transactions() {
 }
 
 #[tokio::test]
-#[ignore = "Requires DATABASE_URL environment variable"]
+
 async fn test_transaction_not_found_handling() {
     dotenvy::dotenv().ok();
 

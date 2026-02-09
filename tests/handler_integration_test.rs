@@ -57,7 +57,7 @@ impl EventHandler<TransferEvent> for TestTransferHandler {
 }
 
 #[tokio::test]
-#[ignore = "Requires DATABASE_URL environment variable"]
+
 async fn test_handler_integration_with_database() {
     dotenvy::dotenv().ok();
     // ... (rest of setup)
