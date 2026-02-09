@@ -5,8 +5,11 @@
 
 use crate::config::SourceConfig;
 use crate::{
-    config::SolanaIndexerConfig,
-    core::{decoder::Decoder, fetcher::Fetcher, registry::DecoderRegistry},
+    config::{IndexingMode, SolanaIndexerConfig},
+    core::{
+        decoder::Decoder, fetcher::Fetcher, log_registry::LogDecoderRegistry,
+        registry::DecoderRegistry,
+    },
     storage::{Storage, StorageBackend},
     streams::{TransactionSource, websocket::WebSocketSource},
     types::traits::{HandlerRegistry, SchemaInitializer},
@@ -46,6 +49,7 @@ pub struct SolanaIndexer {
     fetcher: Arc<Fetcher>,
     decoder: Arc<Decoder>,
     decoder_registry: Arc<DecoderRegistry>,
+    log_decoder_registry: Arc<LogDecoderRegistry>,
     handler_registry: Arc<HandlerRegistry>,
     schema_initializers: Vec<Box<dyn SchemaInitializer>>,
 }
@@ -83,6 +87,7 @@ impl SolanaIndexer {
         let fetcher = Arc::new(Fetcher::new(config.rpc_url()));
         let decoder = Arc::new(Decoder::new());
         let decoder_registry = Arc::new(DecoderRegistry::new());
+        let log_decoder_registry = Arc::new(LogDecoderRegistry::new());
         let handler_registry = Arc::new(HandlerRegistry::new());
 
         Ok(Self {
@@ -91,6 +96,7 @@ impl SolanaIndexer {
             fetcher,
             decoder,
             decoder_registry,
+            log_decoder_registry,
             handler_registry,
             schema_initializers: Vec::new(),
         })
@@ -103,6 +109,7 @@ impl SolanaIndexer {
         let fetcher = Arc::new(Fetcher::new(config.rpc_url()));
         let decoder = Arc::new(Decoder::new());
         let decoder_registry = Arc::new(DecoderRegistry::new());
+        let log_decoder_registry = Arc::new(LogDecoderRegistry::new());
         let handler_registry = Arc::new(HandlerRegistry::new());
 
         Self {
@@ -111,6 +118,7 @@ impl SolanaIndexer {
             fetcher,
             decoder,
             decoder_registry,
+            log_decoder_registry,
             handler_registry,
             schema_initializers: Vec::new(),
         }
@@ -146,6 +154,22 @@ impl SolanaIndexer {
     /// Panics if the decoder registry has multiple references.
     pub fn decoder_registry_mut(&mut self) -> &mut DecoderRegistry {
         Arc::get_mut(&mut self.decoder_registry).expect("DecoderRegistry has multiple references")
+    }
+
+    /// Returns a reference to the log decoder registry.
+    #[must_use]
+    pub fn log_decoder_registry(&self) -> &LogDecoderRegistry {
+        &self.log_decoder_registry
+    }
+
+    /// Returns a mutable reference to the log decoder registry.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the log decoder registry has multiple references.
+    pub fn log_decoder_registry_mut(&mut self) -> &mut LogDecoderRegistry {
+        Arc::get_mut(&mut self.log_decoder_registry)
+            .expect("LogDecoderRegistry has multiple references")
     }
 
     /// Registers a schema initializer.
@@ -356,6 +380,7 @@ impl SolanaIndexer {
         tokio::task::spawn_blocking(move || {
             let rpc_client = RpcClient::new_with_commitment(rpc_url, CommitmentConfig::confirmed());
 
+            #[allow(deprecated)]
             let sigs = rpc_client
                 .get_signatures_for_address_with_config(
                     &program_id,
@@ -405,13 +430,33 @@ impl SolanaIndexer {
 
         let mut events_processed = 0;
 
-        let events = self.decoder_registry.decode_transaction(instructions);
+        // Process based on indexing mode
+        if matches!(
+            self.config.indexing_mode,
+            IndexingMode::Inputs | IndexingMode::All
+        ) {
+            let events = self.decoder_registry.decode_transaction(instructions);
 
-        for (discriminator, event_data) in events {
-            self.handler_registry
-                .handle(&discriminator, &event_data, self.storage.pool(), &sig_str)
-                .await?;
-            events_processed += 1;
+            for (discriminator, event_data) in events {
+                self.handler_registry
+                    .handle(&discriminator, &event_data, self.storage.pool(), &sig_str)
+                    .await?;
+                events_processed += 1;
+            }
+        }
+
+        if matches!(
+            self.config.indexing_mode,
+            IndexingMode::Logs | IndexingMode::All
+        ) {
+            let events = self.log_decoder_registry.decode_logs(&decoded_meta.events);
+
+            for (discriminator, event_data) in events {
+                self.handler_registry
+                    .handle(&discriminator, &event_data, self.storage.pool(), &sig_str)
+                    .await?;
+                events_processed += 1;
+            }
         }
 
         // Mark as processed

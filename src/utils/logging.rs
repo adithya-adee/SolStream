@@ -14,6 +14,9 @@ pub enum LogLevel {
 
 /// Logs a message with color and formatting
 pub fn log(level: LogLevel, message: &str) {
+    if std::env::var("SOLANA_INDEXER_SILENT").is_ok() {
+        return;
+    }
     let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
 
     match level {
@@ -62,6 +65,9 @@ pub fn log(level: LogLevel, message: &str) {
 
 /// Logs indexer startup information
 pub fn log_startup(program_id: &str, rpc_url: &str, poll_interval: u64) {
+    if std::env::var("SOLANA_INDEXER_SILENT").is_ok() {
+        return;
+    }
     println!("\n{}", "═".repeat(80).bright_blue());
     println!("{}", "  Solana Indexer".bright_cyan().bold());
     println!("{}", "═".repeat(80).bright_blue());
@@ -72,6 +78,13 @@ pub fn log_startup(program_id: &str, rpc_url: &str, poll_interval: u64) {
         "Poll Interval:".bright_white(),
         poll_interval.to_string().cyan()
     );
+    println!("{}\n", "═".repeat(80).bright_blue());
+}
+
+/// Logs a section header
+pub fn log_section(title: &str) {
+    println!("\n{}", "═".repeat(80).bright_blue());
+    println!("  {}", title.bright_cyan().bold());
     println!("{}\n", "═".repeat(80).bright_blue());
 }
 
@@ -96,6 +109,9 @@ pub fn log_transaction(signature: &str, slot: u64, events: usize) {
 
 /// Logs batch processing summary
 pub fn log_batch(processed: usize, total: usize, duration_ms: u64) {
+    if std::env::var("SOLANA_INDEXER_SILENT").is_ok() {
+        return;
+    }
     if processed > 0 {
         println!(
             "{} {} {} {} {} {}ms",

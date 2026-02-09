@@ -7,6 +7,29 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use solana_sdk::pubkey::Pubkey;
+
+/// Represents a parsed event from transaction logs.
+#[derive(Debug, Clone)]
+pub struct ParsedEvent {
+    /// The type of event
+    pub event_type: EventType,
+    /// The program that emitted the event (if applicable)
+    pub program_id: Option<Pubkey>,
+    /// Event data (if applicable)
+    pub data: Option<String>,
+}
+
+/// Types of events that can be parsed from logs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EventType {
+    /// Program invocation
+    ProgramInvoke,
+    /// Program data log (potential event)
+    ProgramData,
+    /// Program log message
+    ProgramLog,
+}
 
 /// Calculates the 8-byte discriminator for an event type.
 ///

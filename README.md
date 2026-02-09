@@ -170,20 +170,58 @@ CREATE TABLE _solana_indexer_processed (
 CREATE INDEX idx_processed_slot ON _solana_indexer_processed(slot);
 ```
 
-## Testing
-
-Run the test suite:
-
-```bash
-# Unit tests
-cargo test
-
-# With database tests (requires PostgreSQL)
-TEST_DATABASE_URL=postgresql://localhost/test cargo test
-
-# Doc tests
-cargo test --doc
-```
+## Development & Testing
+ 
+ Ensure your environment is set up with Rust, Cargo, and a running PostgreSQL instance.
+ 
+ ### Running Tests
+ 
+ Run the full test suite, including unit tests and integration tests:
+ 
+ ```bash
+ # Run unit tests
+ cargo test --lib
+ 
+ # Run integration tests (requires DATABASE_URL)
+ DATABASE_URL=postgresql://user:password@localhost/solana_indexer cargo test --test '*_integration_test' -- --ignored
+ ```
+ 
+ ### Benchmarking
+ 
+ The project uses `criterion` for performance benchmarking.
+ 
+ ```bash
+ # Run all benchmarks
+ cargo bench
+ 
+ # Run specific benchmark
+ cargo bench --bench throughput_bench
+ ```
+ 
+ **Available Benchmarks:**
+ - `decoder_bench`: Transaction decoding performance
+ - `storage_bench`: Database operation latency
+ - `throughput_bench`: End-to-end pipeline throughput
+ 
+ ### Code Coverage
+ 
+ Generate code coverage reports using `cargo-tarpaulin` or `cargo-llvm-cov`.
+ 
+ **Using cargo-tarpaulin (Recommended for CI):**
+ ```bash
+ cargo install cargo-tarpaulin
+ cargo tarpaulin --out Html --output-dir coverage
+ ```
+ 
+ **Using cargo-llvm-cov (Local Development):
+ ```bash
+ cargo install cargo-llvm-cov
+ cargo llvm-cov --html --open
+ ```
+ 
+ ### Continuous Integration
+ 
+ A generic CI configuration for coverage reporting is available in `.github/workflows/coverage.yml`. It runs tests and uploads coverage data to Codecov on every push to main.
 
 ## Examples
 
@@ -244,3 +282,12 @@ Built with:
 - **Documentation**: [docs.rs/solana-indexer](https://docs.rs/solana-indexer)
 - **Issues**: [GitHub Issues](https://github.com/adithya-adee/solana-indexer/issues)
 - **Discord**: [Join our community](https://discord.gg/yourserver)
+
+## Benchmark Results Guide
+
+- **Time**: Execution time per iteration (e.g., `[75.937 µs 80.213 µs 84.666 µs]` means 95% confidence interval is between 75µs and 84µs).
+- **Thrpt**: Throughput in elements per second (transactions/sec).
+- **Outliers**: Statistically significant deviations (often due to GC or OS noise).
+
+**Detailed Reports:**
+After running benchmarks, open `target/criterion/report/index.html` in your browser for interactive graphs and failure analysis.

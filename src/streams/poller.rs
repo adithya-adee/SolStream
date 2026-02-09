@@ -7,7 +7,7 @@ use crate::config::SolanaIndexerConfig;
 use crate::core::decoder::Decoder;
 use crate::core::fetcher::Fetcher;
 use crate::utils::error::{Result, SolanaIndexerError};
-use solana_client::rpc_client::RpcClient;
+use solana_client::rpc_client::{GetConfirmedSignaturesForAddress2Config, RpcClient};
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::signature::Signature;
 use std::time::Duration;
@@ -93,8 +93,6 @@ impl Poller {
         let rpc_url = self.config.rpc_url().to_string();
 
         let signatures = tokio::task::spawn_blocking(move || {
-            use solana_client::rpc_client::GetConfirmedSignaturesForAddress2Config;
-
             // Create RPC client in the blocking task
             let rpc_client = RpcClient::new_with_commitment(rpc_url, CommitmentConfig::confirmed());
 
@@ -271,6 +269,7 @@ mod tests {
                 poll_interval_secs: 5,
                 batch_size: 100,
             },
+            indexing_mode: crate::config::IndexingMode::Inputs,
         };
 
         let poller = Poller::new(config);

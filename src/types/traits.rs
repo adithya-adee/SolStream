@@ -4,7 +4,7 @@
 //! the `EventHandler` trait. Developers implement this trait to define custom
 //! business logic for processing decoded events and transactions.
 
-use crate::types::events::EventDiscriminator;
+use crate::types::events::{EventDiscriminator, ParsedEvent};
 use crate::utils::error::{Result, SolanaIndexerError};
 use async_trait::async_trait;
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -63,6 +63,41 @@ where
 {
     fn decode_dynamic(&self, instruction: &UiInstruction) -> Option<([u8; 8], Vec<u8>)> {
         self.decode(instruction).map(|event| {
+            let discriminator = T::discriminator();
+            let data = borsh::to_vec(&event).expect("Failed to serialize event");
+            (discriminator, data)
+        })
+    }
+}
+
+/// Generic log decoder trait for custom parsing logic.
+///
+/// Developers implement this trait to define how transaction logs
+/// are parsed into typed event structures.
+pub trait LogDecoder<T>: Send + Sync {
+    /// Decodes a parsed log event into a typed event.
+    ///
+    /// # Arguments
+    /// * `event` - The parsed event from transaction logs
+    ///
+    /// # Returns
+    /// * `Some(T)` - Successfully decoded event
+    /// * `None` - Event doesn't match or failed to decode
+    fn decode(&self, event: &ParsedEvent) -> Option<T>;
+}
+
+/// Type-erased log decoder for internal SDK use.
+pub trait DynamicLogDecoder: Send + Sync {
+    /// Decodes a log event into discriminator + raw event data.
+    fn decode_log_dynamic(&self, event: &ParsedEvent) -> Option<([u8; 8], Vec<u8>)>;
+}
+
+impl<T> DynamicLogDecoder for Box<dyn LogDecoder<T>>
+where
+    T: EventDiscriminator + BorshSerialize + Send + Sync + 'static,
+{
+    fn decode_log_dynamic(&self, event: &ParsedEvent) -> Option<([u8; 8], Vec<u8>)> {
+        self.decode(event).map(|event| {
             let discriminator = T::discriminator();
             let data = borsh::to_vec(&event).expect("Failed to serialize event");
             (discriminator, data)

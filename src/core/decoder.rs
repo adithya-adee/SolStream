@@ -4,6 +4,7 @@
 //! type-safe Rust objects. It supports IDL-driven decoding for program-specific
 //! events and instructions, as well as common Solana instruction types.
 
+use crate::types::events::{EventType, ParsedEvent};
 use crate::utils::error::{Result, SolanaIndexerError};
 use solana_sdk::pubkey::Pubkey;
 use solana_transaction_status::{
@@ -333,28 +334,6 @@ impl Default for Decoder {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Represents a parsed event from transaction logs.
-#[derive(Debug, Clone)]
-pub struct ParsedEvent {
-    /// The type of event
-    pub event_type: EventType,
-    /// The program that emitted the event (if applicable)
-    pub program_id: Option<Pubkey>,
-    /// Event data (if applicable)
-    pub data: Option<String>,
-}
-
-/// Types of events that can be parsed from logs.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EventType {
-    /// Program invocation
-    ProgramInvoke,
-    /// Program data log (potential event)
-    ProgramData,
-    /// Program log message
-    ProgramLog,
 }
 
 /// Decoded transaction data.

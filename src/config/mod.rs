@@ -28,6 +28,9 @@ pub struct SolanaIndexerConfig {
 
     /// Source configuration
     pub source: SourceConfig,
+
+    /// Indexing mode (Inputs, Logs, or All)
+    pub indexing_mode: IndexingMode,
 }
 
 impl SolanaIndexerConfig {
@@ -61,6 +64,18 @@ pub enum SourceConfig {
     Helius { api_key: String, rpc_url: String },
 }
 
+/// Mode of indexing operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum IndexingMode {
+    /// Index based on instruction data (default).
+    #[default]
+    Inputs,
+    /// Index based on event logs.
+    Logs,
+    /// Index both inputs and logs.
+    All,
+}
+
 /// Builder for `SolanaIndexerConfig`.
 ///
 /// This builder provides a fluent API for constructing `SolanaIndexerConfig` instances
@@ -90,6 +105,7 @@ pub struct SolanaIndexerConfigBuilder {
     poll_interval_secs: Option<u64>,
     batch_size: Option<usize>,
     source: Option<SourceConfig>,
+    indexing_mode: Option<IndexingMode>,
 }
 
 impl SolanaIndexerConfigBuilder {
@@ -297,6 +313,7 @@ impl SolanaIndexerConfigBuilder {
             poll_interval_secs,
             batch_size,
             source,
+            indexing_mode: self.indexing_mode.unwrap_or_default(),
         })
     }
 }

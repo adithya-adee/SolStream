@@ -127,14 +127,16 @@
 
 // Public API exports
 pub use config::{SolanaIndexerConfig, SolanaIndexerConfigBuilder};
-pub use core::decoder::{DecodedTransaction, Decoder, EventType, InstructionInfo, ParsedEvent};
+pub use core::decoder::{DecodedTransaction, Decoder, InstructionInfo};
 pub use core::fetcher::Fetcher;
 pub use core::indexer::SolanaIndexer;
+pub use core::log_registry::LogDecoderRegistry;
 pub use core::registry::DecoderRegistry;
 pub use storage::{Storage, StorageBackend};
 pub use streams::poller::Poller;
 pub use types::events::{
-    DepositEvent, EventDiscriminator, TransferEvent, WithdrawEvent, calculate_discriminator,
+    DepositEvent, EventDiscriminator, EventType, ParsedEvent, TransferEvent, WithdrawEvent,
+    calculate_discriminator,
 };
 pub use types::traits::{
     DynamicEventHandler, DynamicInstructionDecoder, EventHandler, HandlerRegistry,
