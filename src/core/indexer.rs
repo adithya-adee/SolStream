@@ -11,7 +11,7 @@ use crate::{
         registry::DecoderRegistry,
     },
     storage::{Storage, StorageBackend},
-    streams::{TransactionSource, websocket::WebSocketSource},
+    streams::{TransactionSource, helius::HeliusSource, websocket::WebSocketSource},
     types::traits::{HandlerRegistry, SchemaInitializer},
     utils::{
         error::{Result, SolanaIndexerError},
@@ -203,7 +203,13 @@ impl SolanaIndexer {
         match &self.config.source {
             SourceConfig::Rpc { .. } => self.process_rpc_source().await,
             SourceConfig::WebSocket { .. } => self.process_websocket_source().await,
-            SourceConfig::Helius { .. } => self.process_helius_source().await,
+            SourceConfig::Helius { use_websocket, .. } => {
+                if *use_websocket {
+                    self.process_helius_source().await
+                } else {
+                    self.process_rpc_source().await
+                }
+            }
         }
     }
 
@@ -378,12 +384,67 @@ impl SolanaIndexer {
         }
     }
 
-    #[allow(clippy::unused_async)]
     async fn process_helius_source(self) -> Result<()> {
-        logging::log_error("Helius source", "Not implemented yet");
-        Err(crate::utils::error::SolanaIndexerError::ConfigError(
-            "Helius source not implemented".to_string(),
-        ))
+        logging::log_startup(
+            &self.config.program_id.to_string(),
+            self.config.rpc_url(),
+            0, // Real-time
+        );
+
+        // Run schema initializers
+        for initializer in &self.schema_initializers {
+            logging::log(logging::LogLevel::Info, "Initializing database schema...");
+            initializer.initialize(self.storage.pool()).await?;
+        }
+        logging::log(logging::LogLevel::Success, "Database schema initialized");
+
+        // Instantiate HeliusSource on demand from configuration
+        let mut source = HeliusSource::new(self.config.clone()).await?;
+
+        logging::log(
+            logging::LogLevel::Info,
+            "Starting indexer loop (Helius WebSocket)...",
+        );
+
+        loop {
+            match source.next_batch().await {
+                Ok(signatures) => {
+                    let start_time = std::time::Instant::now();
+                    let mut processed_count = 0;
+
+                    for signature in signatures {
+                        let sig_str = signature.to_string();
+
+                        // Check if already processed (idempotency)
+                        if self.storage.is_processed(&sig_str).await? {
+                            continue;
+                        }
+
+                        // Process transaction
+                        match self.process_transaction(&signature).await {
+                            Ok(()) => {
+                                processed_count += 1;
+                            }
+                            Err(e) => {
+                                logging::log_error("Transaction error", &format!("{sig_str}: {e}"));
+                            }
+                        }
+                    }
+
+                    if processed_count > 0 {
+                        let duration_ms =
+                            u64::try_from(start_time.elapsed().as_millis()).unwrap_or(u64::MAX);
+                        logging::log_batch(processed_count, processed_count, duration_ms);
+                    }
+                }
+                Err(e) => {
+                    logging::log_error("Helius stream error", &e.to_string());
+                    // HeliusSource already handles reconnection internally, but if it returns error here,
+                    // valid to wait a bit
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                }
+            }
+        }
     }
 
     async fn poll_and_process(&self, last_signature: &mut Option<Signature>) -> Result<usize> {

@@ -10,6 +10,8 @@ use std::str::FromStr;
 
 const HELIUS_MAINNET_RPC_URL: &str = "https://mainnet.helius-rpc.com/";
 const HELIUS_MAINNET_WS_URL: &str = "wss://mainnet.helius-rpc.com/";
+const HELIUS_DEVNET_RPC_URL: &str = "https://devnet.helius-rpc.com/";
+const HELIUS_DEVNET_WS_URL: &str = "wss://devnet.helius-rpc.com/";
 
 /// Configuration for `SolanaIndexer` indexer.
 ///
@@ -46,9 +48,15 @@ impl SolanaIndexerConfig {
     pub fn rpc_url(&self) -> &str {
         match &self.source {
             SourceConfig::Rpc { rpc_url, .. } | SourceConfig::WebSocket { rpc_url, .. } => rpc_url,
-            SourceConfig::Helius { api_key, .. } => {
+            SourceConfig::Helius {
+                api_key, network, ..
+            } => {
                 // Dynamically construct Helius RPC URL
-                Box::leak(format!("{HELIUS_MAINNET_RPC_URL}?api-key={api_key}").into_boxed_str())
+                let base_url = match network {
+                    HeliusNetwork::Mainnet => HELIUS_MAINNET_RPC_URL,
+                    HeliusNetwork::Devnet => HELIUS_DEVNET_RPC_URL,
+                };
+                Box::leak(format!("{base_url}?api-key={api_key}").into_boxed_str())
             }
         }
     }
@@ -57,10 +65,16 @@ impl SolanaIndexerConfig {
     #[must_use]
     pub fn helius_ws_url(&self) -> Option<&str> {
         match &self.source {
-            SourceConfig::Helius { api_key, .. } => {
+            SourceConfig::Helius {
+                api_key, network, ..
+            } => {
                 // Dynamically construct Helius WebSocket URL
+                let base_url = match network {
+                    HeliusNetwork::Mainnet => HELIUS_MAINNET_WS_URL,
+                    HeliusNetwork::Devnet => HELIUS_DEVNET_WS_URL,
+                };
                 Some(Box::leak(
-                    format!("{HELIUS_MAINNET_WS_URL}?api-key={api_key}").into_boxed_str(),
+                    format!("{base_url}?api-key={api_key}").into_boxed_str(),
                 ))
             }
             _ => None,
@@ -86,8 +100,20 @@ pub enum SourceConfig {
     /// Helius-specific source
     Helius {
         api_key: String,
+        network: HeliusNetwork,
+        use_websocket: bool,
         reconnect_delay_secs: u64,
     },
+}
+
+/// Network selection for Helius.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HeliusNetwork {
+    /// Solana Mainnet Beta
+    #[default]
+    Mainnet,
+    /// Solana Devnet
+    Devnet,
 }
 
 /// Mode of indexing operation.
@@ -206,20 +232,38 @@ impl SolanaIndexerConfigBuilder {
     ///
     /// # Arguments
     ///
-    /// * `api_key` - The Helius API key. The RPC and WebSocket URLs will be constructed using this key and Helius's standard mainnet endpoints.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use solana_indexer::SolanaIndexerConfigBuilder;
-    /// let builder = SolanaIndexerConfigBuilder::new()
-    ///     .with_helius("YOUR_HELIUS_API_KEY");
-    /// ```
+    /// * `api_key` - The Helius API key
+    /// * `use_websocket` - Whether to use WebSocket (true) or RPC polling only (false)
     #[must_use]
-    pub fn with_helius(mut self, api_key: impl Into<String>) -> Self {
+    pub fn with_helius(mut self, api_key: impl Into<String>, use_websocket: bool) -> Self {
         self.source = Some(SourceConfig::Helius {
             api_key: api_key.into(),
-            reconnect_delay_secs: 5, // Default reconnect delay
+            network: HeliusNetwork::Mainnet,
+            use_websocket,
+            reconnect_delay_secs: 5,
+        });
+        self
+    }
+
+    /// Sets the Helius source with a specific network.
+    ///
+    /// # Arguments
+    ///
+    /// * `api_key` - The Helius API key
+    /// * `network` - The Helius network (Mainnet or Devnet)
+    /// * `use_websocket` - Whether to use WebSocket (true) or RPC polling only (false)
+    #[must_use]
+    pub fn with_helius_network(
+        mut self,
+        api_key: impl Into<String>,
+        network: HeliusNetwork,
+        use_websocket: bool,
+    ) -> Self {
+        self.source = Some(SourceConfig::Helius {
+            api_key: api_key.into(),
+            network,
+            use_websocket,
+            reconnect_delay_secs: 5,
         });
         self
     }
@@ -497,7 +541,7 @@ mod tests {
     #[test]
     fn test_builder_helius_config() {
         let config = SolanaIndexerConfigBuilder::new()
-            .with_helius("test-api-key")
+            .with_helius("test-api-key", true)
             .with_database("postgresql://localhost/db")
             .program_id("11111111111111111111111111111111")
             .build()
@@ -509,16 +553,53 @@ mod tests {
         );
         assert_eq!(
             config.helius_ws_url(),
-            Some("wss://atlas-mainnet.helius-rpc.com/?api-key=test-api-key")
+            Some("wss://mainnet.helius-rpc.com/?api-key=test-api-key")
         );
 
         match config.source {
             SourceConfig::Helius {
                 api_key,
+                network,
+                use_websocket,
                 reconnect_delay_secs,
             } => {
                 assert_eq!(api_key, "test-api-key");
-                assert_eq!(reconnect_delay_secs, 5); // Default value
+                assert_eq!(network, HeliusNetwork::Mainnet);
+                assert!(use_websocket);
+                assert_eq!(reconnect_delay_secs, 5);
+            }
+            _ => panic!("Expected Helius source"),
+        }
+    }
+
+    #[test]
+    fn test_builder_helius_devnet_config() {
+        let config = SolanaIndexerConfigBuilder::new()
+            .with_helius_network("test-api-key", HeliusNetwork::Devnet, true)
+            .with_database("postgresql://localhost/db")
+            .program_id("11111111111111111111111111111111")
+            .build()
+            .unwrap();
+
+        assert_eq!(
+            config.rpc_url(),
+            "https://devnet.helius-rpc.com/?api-key=test-api-key"
+        );
+        assert_eq!(
+            config.helius_ws_url(),
+            Some("wss://devnet.helius-rpc.com/?api-key=test-api-key")
+        );
+
+        match config.source {
+            SourceConfig::Helius {
+                api_key,
+                network,
+                use_websocket,
+                ..
+            } => {
+                assert_eq!(api_key, "test-api-key");
+                assert_eq!(network, HeliusNetwork::Devnet);
+                assert!(use_websocket);
             }
             _ => panic!("Expected Helius source"),
         }
