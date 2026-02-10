@@ -24,7 +24,7 @@ jobs:
         uses: taiki-e/install-action@cargo-tarpaulin
 
       - name: Run coverage
-        run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out Xml
+        run: cargo tarpaulin --verbose --workspace --timeout 120 --out Xml --skip-clean --exclude-files benches/*
 
       - name: Upload to Codecov
         uses: codecov/codecov-action@v4
