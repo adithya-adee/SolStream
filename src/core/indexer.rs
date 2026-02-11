@@ -5,10 +5,10 @@
 
 use crate::config::SourceConfig;
 use crate::{
-    config::{IndexingMode, SolanaIndexerConfig, StartStrategy},
+    config::{SolanaIndexerConfig, StartStrategy},
     core::{
-        decoder::Decoder, fetcher::Fetcher, log_registry::LogDecoderRegistry,
-        registry::DecoderRegistry,
+        account_registry::AccountDecoderRegistry, decoder::Decoder, fetcher::Fetcher,
+        log_registry::LogDecoderRegistry, registry::DecoderRegistry,
     },
     storage::{Storage, StorageBackend},
     streams::{TransactionSource, helius::HeliusSource, websocket::WebSocketSource},
@@ -53,6 +53,7 @@ pub struct SolanaIndexer {
     decoder: Arc<Decoder>,
     decoder_registry: Arc<DecoderRegistry>,
     log_decoder_registry: Arc<LogDecoderRegistry>,
+    account_decoder_registry: Arc<AccountDecoderRegistry>,
     handler_registry: Arc<HandlerRegistry>,
     schema_initializers: Vec<Box<dyn SchemaInitializer>>,
 }
@@ -91,6 +92,7 @@ impl SolanaIndexer {
         let decoder = Arc::new(Decoder::new());
         let decoder_registry = Arc::new(DecoderRegistry::new());
         let log_decoder_registry = Arc::new(LogDecoderRegistry::new());
+        let account_decoder_registry = Arc::new(AccountDecoderRegistry::new());
         let handler_registry = Arc::new(HandlerRegistry::new());
 
         Ok(Self {
@@ -100,6 +102,7 @@ impl SolanaIndexer {
             decoder,
             decoder_registry,
             log_decoder_registry,
+            account_decoder_registry,
             handler_registry,
             schema_initializers: Vec::new(),
         })
@@ -113,6 +116,7 @@ impl SolanaIndexer {
         let decoder = Arc::new(Decoder::new());
         let decoder_registry = Arc::new(DecoderRegistry::new());
         let log_decoder_registry = Arc::new(LogDecoderRegistry::new());
+        let account_decoder_registry = Arc::new(AccountDecoderRegistry::new());
         let handler_registry = Arc::new(HandlerRegistry::new());
 
         Self {
@@ -122,6 +126,7 @@ impl SolanaIndexer {
             decoder,
             decoder_registry,
             log_decoder_registry,
+            account_decoder_registry,
             handler_registry,
             schema_initializers: Vec::new(),
         }
@@ -175,6 +180,22 @@ impl SolanaIndexer {
             .expect("LogDecoderRegistry has multiple references")
     }
 
+    /// Returns a reference to the account decoder registry.
+    #[must_use]
+    pub fn account_decoder_registry(&self) -> &AccountDecoderRegistry {
+        &self.account_decoder_registry
+    }
+
+    /// Returns a mutable reference to the account decoder registry.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the account decoder registry has multiple references.
+    pub fn account_decoder_registry_mut(&mut self) -> &mut AccountDecoderRegistry {
+        Arc::get_mut(&mut self.account_decoder_registry)
+            .expect("AccountDecoderRegistry has multiple references")
+    }
+
     /// Registers a schema initializer.
     pub fn register_schema_initializer(&mut self, initializer: Box<dyn SchemaInitializer>) {
         self.schema_initializers.push(initializer);
@@ -187,6 +208,18 @@ impl SolanaIndexer {
     /// Panics if the decoder has multiple references.
     pub fn decoder_mut(&mut self) -> &mut Decoder {
         Arc::get_mut(&mut self.decoder).expect("Decoder has multiple references")
+    }
+
+    /// Returns a reference to the fetcher.
+    #[must_use]
+    pub fn fetcher(&self) -> &Fetcher {
+        &self.fetcher
+    }
+
+    /// Returns a reference to the storage backend.
+    #[must_use]
+    pub fn storage(&self) -> &dyn StorageBackend {
+        &*self.storage
     }
 
     /// Starts the indexer.
@@ -432,6 +465,7 @@ impl SolanaIndexer {
                         let decoder = self.decoder.clone();
                         let decoder_registry = self.decoder_registry.clone();
                         let log_decoder_registry = self.log_decoder_registry.clone();
+                        let account_decoder_registry = self.account_decoder_registry.clone();
                         let handler_registry = self.handler_registry.clone();
                         let storage = self.storage.clone();
                         let config = self.config.clone();
@@ -444,6 +478,7 @@ impl SolanaIndexer {
                                 decoder,
                                 decoder_registry,
                                 log_decoder_registry,
+                                account_decoder_registry,
                                 handler_registry,
                                 storage,
                                 config,
@@ -566,6 +601,7 @@ impl SolanaIndexer {
             self.decoder.clone(),
             self.decoder_registry.clone(),
             self.log_decoder_registry.clone(),
+            self.account_decoder_registry.clone(),
             self.handler_registry.clone(),
             self.storage.clone(),
             self.config.clone(),
@@ -581,6 +617,7 @@ impl SolanaIndexer {
         decoder: Arc<Decoder>,
         decoder_registry: Arc<DecoderRegistry>,
         log_decoder_registry: Arc<LogDecoderRegistry>,
+        account_decoder_registry: Arc<AccountDecoderRegistry>,
         handler_registry: Arc<HandlerRegistry>,
         storage: Arc<dyn StorageBackend>,
         config: SolanaIndexerConfig,
@@ -611,10 +648,7 @@ impl SolanaIndexer {
         let mut events_processed = 0;
 
         // Process based on indexing mode
-        if matches!(
-            config.indexing_mode,
-            IndexingMode::Inputs | IndexingMode::All
-        ) {
+        if config.indexing_mode.inputs {
             let events = decoder_registry.decode_transaction(instructions);
 
             for (discriminator, event_data) in events {
@@ -648,7 +682,7 @@ impl SolanaIndexer {
             }
         }
 
-        if matches!(config.indexing_mode, IndexingMode::Logs | IndexingMode::All) {
+        if config.indexing_mode.logs {
             let events = log_decoder_registry.decode_logs(&decoded_meta.events);
 
             for (discriminator, event_data) in events {
@@ -680,14 +714,98 @@ impl SolanaIndexer {
                 }
                 events_processed += 1;
             }
+
+            if config.indexing_mode.accounts {
+                // Extract unique writable accounts from the transaction
+                // We focus on writable accounts as their state might have changed
+                let mut writable_accounts = std::collections::HashSet::new();
+
+                if let solana_transaction_status::EncodedTransaction::Json(ui_tx) =
+                    &transaction.transaction.transaction
+                {
+                    match &ui_tx.message {
+                        solana_transaction_status::UiMessage::Parsed(msg) => {
+                            for account in &msg.account_keys {
+                                if account.writable
+                                    && let Ok(pubkey) =
+                                        solana_sdk::pubkey::Pubkey::from_str(&account.pubkey)
+                                {
+                                    writable_accounts.insert(pubkey);
+                                }
+                            }
+                        }
+                        solana_transaction_status::UiMessage::Raw(msg) => {
+                            for key_str in &msg.account_keys {
+                                if let Ok(pubkey) = solana_sdk::pubkey::Pubkey::from_str(key_str) {
+                                    writable_accounts.insert(pubkey);
+                                }
+                            }
+                        }
+                    }
+                };
+
+                if !writable_accounts.is_empty() {
+                    let keys: Vec<_> = writable_accounts.into_iter().collect();
+                    // Batch fetch
+                    if let Ok(accounts) = fetcher.fetch_multiple_accounts(&keys).await {
+                        for account in accounts.iter().flatten() {
+                            let decoded_list = account_decoder_registry.decode_account(account);
+                            for (discriminator, event_data) in decoded_list {
+                                // Dispatch to handler
+                                // Retry logic similar to above
+                                let mut attempts = 0;
+                                let max_attempts = 3;
+                                loop {
+                                    attempts += 1;
+                                    match handler_registry
+                                        .handle(
+                                            &discriminator,
+                                            &event_data,
+                                            storage.pool(),
+                                            &sig_str,
+                                        )
+                                        .await
+                                    {
+                                        Ok(()) => break,
+                                        Err(e) if attempts < max_attempts => {
+                                            logging::log_error(
+                                                "Handler error (Account)",
+                                                &format!(
+                                                    "Attempt {attempts}/{max_attempts} for {sig_str}: {e}"
+                                                ),
+                                            );
+                                            tokio::time::sleep(Duration::from_millis(
+                                                100 * attempts,
+                                            ))
+                                            .await;
+                                        }
+                                        Err(e) => {
+                                            logging::log_error(
+                                                "Handler failed after retries (Account)",
+                                                &format!("{sig_str}: {e}"),
+                                            );
+                                            // We log error but maybe don't fail the whole tx for one account?
+                                            // Return error to be safe
+                                            return Err(e);
+                                        }
+                                    }
+                                }
+                                events_processed += 1;
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // Mark as processed
         storage.mark_processed(&sig_str, transaction.slot).await?;
 
-        // Log processing with colorful output
         if events_processed > 0 {
-            crate::utils::logging::log_transaction(&sig_str, decoded_meta.slot, events_processed);
+            logging::log(
+                logging::LogLevel::Success,
+                &format!("Processed transaction: {sig_str} ({events_processed} events)"),
+            );
         }
 
         Ok(())
