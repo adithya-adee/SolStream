@@ -280,6 +280,7 @@ mod tests {
             start_strategy: crate::config::StartStrategy::Latest,
             backfill: Default::default(),
             registry: Default::default(),
+            stale_tentative_threshold: 1000,
         };
 
         let poller = Poller::new(config);

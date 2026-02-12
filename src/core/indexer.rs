@@ -57,6 +57,7 @@ pub struct SolanaIndexer {
     account_decoder_registry: Arc<AccountDecoderRegistry>,
     handler_registry: Arc<HandlerRegistry>,
     schema_initializers: Vec<Box<dyn SchemaInitializer>>,
+    cancellation_token: tokio_util::sync::CancellationToken,
 }
 
 impl SolanaIndexer {
@@ -107,6 +108,7 @@ impl SolanaIndexer {
             account_decoder_registry,
             handler_registry,
             schema_initializers: Vec::new(),
+            cancellation_token: tokio_util::sync::CancellationToken::new(),
         })
     }
 
@@ -132,6 +134,7 @@ impl SolanaIndexer {
             account_decoder_registry,
             handler_registry,
             schema_initializers: Vec::new(),
+            cancellation_token: tokio_util::sync::CancellationToken::new(),
         }
     }
 
@@ -376,6 +379,42 @@ impl SolanaIndexer {
     /// - RPC/WebSocket connection fails
     /// - Decoding errors occur
     pub async fn start(self) -> Result<()> {
+        let token = self.cancellation_token.clone();
+
+        // Spawn signal handler
+        tokio::spawn(async move {
+            if let Ok(()) = tokio::signal::ctrl_c().await {
+                logging::log(logging::LogLevel::Info, "Received Ctrl+C, shutting down...");
+                token.cancel();
+            }
+        });
+
+        // Spawn background cleanup task
+        let cleanup_token = self.cancellation_token.clone();
+        let storage = self.storage.clone();
+        let threshold = self.config.stale_tentative_threshold;
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60)); // Check every minute
+            loop {
+                tokio::select! {
+                    _ = cleanup_token.cancelled() => break,
+                    _ = interval.tick() => {
+                        match storage.cleanup_stale_tentative_transactions(threshold).await {
+                            Ok(count) => {
+                                if count > 0 {
+                                    logging::log(logging::LogLevel::Info, &format!("Cleaned up {} stale tentative transactions", count));
+                                }
+                            }
+                            Err(e) => {
+                                logging::log_error("Cleanup error", &e.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
         match &self.config.source {
             SourceConfig::Rpc { .. } => self.process_rpc_source().await,
             SourceConfig::WebSocket { .. } => self.process_websocket_source().await,
@@ -387,6 +426,16 @@ impl SolanaIndexer {
                 }
             }
         }
+    }
+
+    /// Triggers a graceful shutdown programmatically.
+    pub fn shutdown(&self) {
+        self.cancellation_token.cancel();
+    }
+
+    /// Returns a clone of the cancellation token.
+    pub fn cancellation_token(&self) -> tokio_util::sync::CancellationToken {
+        self.cancellation_token.clone()
     }
 
     /// Internal method to run the RPC polling loop.
@@ -532,7 +581,20 @@ impl SolanaIndexer {
         let mut source = WebSocketSource::new(ws_url, self.config.program_id, reconnect_delay);
 
         loop {
-            match source.next_batch().await {
+            if self.cancellation_token.is_cancelled() {
+                logging::log(logging::LogLevel::Info, "Graceful shutdown complete.");
+                break;
+            }
+
+            let batch = tokio::select! {
+                 _ = self.cancellation_token.cancelled() => {
+                    logging::log(logging::LogLevel::Info, "Graceful shutdown initiated...");
+                    break;
+                 }
+                 res = source.next_batch() => res,
+            };
+
+            match batch {
                 Ok(signatures) => {
                     let start_time = std::time::Instant::now();
                     let mut processed_count = 0;
@@ -614,6 +676,7 @@ impl SolanaIndexer {
                 }
             }
         }
+        Ok(())
     }
 
     async fn process_helius_source(self) -> Result<()> {
@@ -642,7 +705,20 @@ impl SolanaIndexer {
         let semaphore = Arc::new(tokio::sync::Semaphore::new(100)); // Limit to 100 concurrent tasks
 
         loop {
-            match source.next_batch().await {
+            if self.cancellation_token.is_cancelled() {
+                logging::log(logging::LogLevel::Info, "Graceful shutdown complete.");
+                break;
+            }
+
+            let batch = tokio::select! {
+                 _ = self.cancellation_token.cancelled() => {
+                    logging::log(logging::LogLevel::Info, "Graceful shutdown initiated...");
+                    break;
+                 }
+                 res = source.next_batch() => res,
+            };
+
+            match batch {
                 Ok(signatures) => {
                     let mut processed_count = 0;
 
@@ -767,6 +843,7 @@ impl SolanaIndexer {
                 }
             }
         }
+        Ok(())
     }
 
     async fn poll_and_process(&self, last_signature: &mut Option<Signature>) -> Result<usize> {

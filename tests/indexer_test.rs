@@ -128,6 +128,10 @@ impl StorageBackend for MockStorage {
     async fn mark_backfill_complete(&self) -> Result<()> {
         Ok(())
     }
+
+    async fn cleanup_stale_tentative_transactions(&self, _slot_threshold: u64) -> Result<u64> {
+        Ok(0)
+    }
 }
 
 // Setup common mocks for RPC

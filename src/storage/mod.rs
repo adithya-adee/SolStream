@@ -25,6 +25,7 @@ pub trait StorageBackend: Send + Sync {
     async fn get_tentative_transactions(&self, slot: u64) -> Result<Vec<String>>;
     async fn rollback_slot(&self, slot: u64) -> Result<()>;
     async fn get_block_hash(&self, slot: u64) -> Result<Option<String>>;
+    async fn cleanup_stale_tentative_transactions(&self, slot_threshold: u64) -> Result<u64>;
 
     // Backfill progress tracking
     async fn save_backfill_progress(&self, slot: u64) -> Result<()>;
@@ -428,6 +429,25 @@ impl Storage {
         Ok(())
     }
 
+    pub async fn cleanup_stale_tentative_transactions(&self, slot_threshold: u64) -> Result<u64> {
+        // Delete tentative transactions older than the threshold
+        // We use the current max processed slot as the reference
+        let current_slot = self.get_last_processed_slot().await?.unwrap_or(0);
+
+        if current_slot < slot_threshold {
+            return Ok(0);
+        }
+
+        let cutoff_slot = current_slot - slot_threshold;
+
+        let result = sqlx::query("DELETE FROM _solana_indexer_tentative WHERE slot < $1")
+            .bind(i64::try_from(cutoff_slot).unwrap_or(0))
+            .execute(&self.pool)
+            .await?;
+
+        Ok(result.rows_affected())
+    }
+
     pub async fn get_block_hash(&self, slot: u64) -> Result<Option<String>> {
         let hash = sqlx::query_scalar::<_, Option<String>>(
             "SELECT block_hash FROM _solana_indexer_finalized_blocks WHERE slot = $1",
@@ -530,6 +550,11 @@ impl StorageBackend for Storage {
         self.get_block_hash(slot).await
     }
 
+    async fn cleanup_stale_tentative_transactions(&self, slot_threshold: u64) -> Result<u64> {
+        self.cleanup_stale_tentative_transactions(slot_threshold)
+            .await
+    }
+
     async fn save_backfill_progress(&self, slot: u64) -> Result<()> {
         self.save_backfill_progress(slot).await
     }
@@ -592,6 +617,64 @@ mod tests {
             // Get last processed slot
             let last_slot = storage.get_last_processed_slot().await.unwrap();
             assert_eq!(last_slot, Some(slot));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_stale_transactions() {
+        let db_url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgresql://localhost/test".to_string());
+
+        if let Ok(storage) = Storage::new(&db_url).await {
+            storage.initialize().await.unwrap();
+
+            // Setup: Insert some tentative transactions
+            let current_slot = 1000;
+            storage
+                .mark_processed("sig_latest", current_slot)
+                .await
+                .unwrap();
+
+            // Old transaction (should be deleted)
+            storage
+                .mark_tentative("sig_old", current_slot - 100, "hash_old")
+                .await
+                .unwrap();
+
+            // New transaction (should be kept)
+            storage
+                .mark_tentative("sig_new", current_slot - 10, "hash_new")
+                .await
+                .unwrap();
+
+            // Threshold is 50, so anything older than 1000 - 50 = 950 should be deleted?
+            // Wait, logic is: slot < (current - threshold)
+            // If threshold is 50, cutoff is 950.
+            // sig_old is 900. 900 < 950 -> deleted.
+            // sig_new is 990. 990 < 950 -> false -> kept.
+
+            let deleted = storage
+                .cleanup_stale_tentative_transactions(50)
+                .await
+                .unwrap();
+            assert!(deleted >= 1);
+
+            // Verify
+            let tentative_old = sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM _solana_indexer_tentative WHERE signature = 'sig_old')"
+            )
+            .fetch_one(&storage.pool)
+            .await
+            .unwrap();
+            assert!(!tentative_old, "Old transaction should be deleted");
+
+            let tentative_new = sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM _solana_indexer_tentative WHERE signature = 'sig_new')"
+            )
+            .fetch_one(&storage.pool)
+            .await
+            .unwrap();
+            assert!(tentative_new, "New transaction should be kept");
         }
     }
 }

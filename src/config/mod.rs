@@ -62,6 +62,9 @@ pub struct SolanaIndexerConfig {
 
     /// Registry configuration (limits and metrics)
     pub registry: RegistryConfig,
+
+    /// Threshold in slots for cleaning up stale tentative transactions (default: 1000)
+    pub stale_tentative_threshold: u64,
 }
 
 impl SolanaIndexerConfig {
@@ -284,6 +287,7 @@ pub struct SolanaIndexerConfigBuilder {
     start_strategy: Option<StartStrategy>,
     backfill: Option<BackfillConfig>,
     registry: Option<RegistryConfig>,
+    stale_tentative_threshold: Option<u64>,
 }
 
 impl SolanaIndexerConfigBuilder {
@@ -552,6 +556,17 @@ impl SolanaIndexerConfigBuilder {
         self
     }
 
+    /// Sets the stale tentative transaction threshold in slots.
+    ///
+    /// # Arguments
+    ///
+    /// * `threshold` - Number of slots to wait before considering a tentative transaction stale
+    #[must_use]
+    pub fn with_stale_tentative_threshold(mut self, threshold: u64) -> Self {
+        self.stale_tentative_threshold = Some(threshold);
+        self
+    }
+
     /// Builds and validates the configuration.
     ///
     /// # Errors
@@ -604,6 +619,7 @@ impl SolanaIndexerConfigBuilder {
             start_strategy: self.start_strategy.unwrap_or_default(),
             backfill: self.backfill.unwrap_or_default(),
             registry: self.registry.unwrap_or_default(),
+            stale_tentative_threshold: self.stale_tentative_threshold.unwrap_or(1000),
         })
     }
 }
