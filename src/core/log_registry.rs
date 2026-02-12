@@ -87,7 +87,6 @@ impl LogDecoderRegistry {
 
         for event in events {
             self.metrics.inc_calls();
-            // We only look up decoders if we know the program ID
             if let Some(program_id) = &event.program_id {
                 let program_id_str = program_id.to_string();
 

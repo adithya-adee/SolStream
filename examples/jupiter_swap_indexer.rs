@@ -72,7 +72,6 @@ impl LogDecoder<JupiterSwapEvent> for JupiterLogDecoder {
         // We are looking for "Program log: Instruction: Route" or similar
         // The event.data contains the log message string
         if let Some(log_message) = &event.data {
-            println!("🔍 DEBUG Log: {}", log_message);
             // Simple string matching for demonstration
             if log_message.contains("Instruction: Route")
                 || log_message.contains("Instruction: SharedAccountsRoute")
