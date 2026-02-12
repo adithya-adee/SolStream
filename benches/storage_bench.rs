@@ -1,13 +1,11 @@
-use honggfuzz::fuzz;
-use solana_indexer::{Storage, utils::logging::log_section};
-use std::sync::atomic::{AtomicU64, Ordering};
+use solana_indexer::{Storage, StorageBackend};
+use std::sync::Arc;
+use std::time::Instant;
 use tokio::runtime::Runtime;
 
 fn main() {
     let rt = Runtime::new().unwrap();
-    dotenvy::dotenv().ok();
-
-    log_section("Starting Storage Fuzzing");
+    // dotenvy::dotenv().ok(); // Optional
 
     // Skip if DATABASE_URL not set
     let database_url = match std::env::var("DATABASE_URL") {
@@ -18,47 +16,46 @@ fn main() {
         }
     };
 
+    println!("Starting Storage Benchmark...");
+
+    // Initialize storage
     let storage = rt.block_on(async {
         let s = Storage::new(&database_url)
             .await
             .expect("Failed to connect");
         s.initialize().await.expect("Failed to initialize");
-        std::sync::Arc::new(s)
+        Arc::new(s)
     });
 
-    let counter = AtomicU64::new(0);
+    let iterations = 10_000; // Database ops are slower, use fewer iterations
+    let start = Instant::now();
 
-    loop {
-        fuzz!(|data: &[u8]| {
-            let storage = storage.clone();
-            rt.block_on(async {
-                if data.is_empty() {
-                    return;
-                }
+    rt.block_on(async {
+        let backend: Arc<dyn StorageBackend> = storage.clone();
 
-                // Use the first byte to determine the operation
-                match data[0] % 3 {
-                    0 => {
-                        let _ = storage.is_processed("bench_signature_123").await;
-                    }
-                    1 => {
-                        let val = counter.fetch_add(1, Ordering::Relaxed);
-                        let sig = format!(
-                            "bench_sig_{}_{}",
-                            val,
-                            data[1..]
-                                .iter()
-                                .map(|b| format!("{:02x}", b))
-                                .collect::<String>()
-                        );
-                        let _ = storage.mark_processed(&sig, 12345).await;
-                    }
-                    2 => {
-                        let _ = storage.get_last_processed_slot().await;
-                    }
-                    _ => {}
-                }
-            });
-        });
-    }
+        for i in 0..iterations {
+            let sig = format!("bench_simple_sig_{}", i);
+
+            // Write
+            let _ = backend.mark_processed(&sig, 12345).await;
+
+            // Read
+            if i % 10 == 0 {
+                let _ = backend.is_processed(&sig).await;
+            }
+
+            if i % 1000 == 0 {
+                print!(".");
+                use std::io::Write;
+                std::io::stdout().flush().unwrap();
+            }
+        }
+    });
+
+    let duration = start.elapsed();
+    println!("\nPerformed {} storage ops in {:?}", iterations, duration);
+    println!(
+        "Throughput: {:.2} ops/s",
+        iterations as f64 / duration.as_secs_f64()
+    );
 }

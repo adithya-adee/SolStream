@@ -1,12 +1,11 @@
-use honggfuzz::fuzz;
 use serde_json::json;
-use solana_indexer::Decoder;
+use solana_indexer::core::decoder::Decoder;
 use solana_transaction_status::{
     EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction,
     EncodedTransactionWithStatusMeta, UiInstruction, UiMessage, UiParsedInstruction,
     UiParsedMessage, UiTransaction, UiTransactionStatusMeta, option_serializer::OptionSerializer,
-    parse_instruction::ParsedInstruction,
 };
+use std::time::Instant;
 
 fn create_mock_transaction(
     instructions: Vec<UiInstruction>,
@@ -45,29 +44,40 @@ fn create_mock_transaction(
 }
 
 fn main() {
-    let decoder = Decoder::new();
-    loop {
-        fuzz!(|data: &[u8]| {
-            // Scenario 1: Fuzz with random transaction structure (via serde)
-            if let Ok(tx) =
-                serde_json::from_slice::<EncodedConfirmedTransactionWithStatusMeta>(data)
-            {
-                let _ = decoder.decode_transaction(&tx);
-            }
+    println!("Starting Decoder Benchmark...");
 
-            // Scenario 2: Fuzz with valid structure but random instruction data
-            // Use the first byte to determine which scenario to run, or just run both/mix
-            if data.len() > 1 {
-                let instruction =
-                    UiInstruction::Parsed(UiParsedInstruction::Parsed(ParsedInstruction {
-                        program: "system".to_string(),
-                        program_id: "11111111111111111111111111111111".to_string(),
-                        parsed: json!({"type": "transfer", "data": data}),
-                        stack_height: None,
-                    }));
-                let tx = create_mock_transaction(vec![instruction]);
-                let _ = decoder.decode_transaction(&tx);
-            }
-        });
+    let decoder = Decoder::new();
+    let iterations = 100_000;
+
+    let start = Instant::now();
+
+    for i in 0..iterations {
+        // Create mock data using loop counter
+        let data = vec![(i % 255) as u8; 32];
+
+        let instruction = UiInstruction::Parsed(UiParsedInstruction::Parsed(
+            solana_transaction_status::parse_instruction::ParsedInstruction {
+                program: "system".to_string(),
+                program_id: "11111111111111111111111111111111".to_string(),
+                parsed: json!({"type": "transfer", "data": data}),
+                stack_height: None,
+            },
+        ));
+
+        let tx = create_mock_transaction(vec![instruction]);
+        let _ = decoder.decode_transaction(&tx);
+
+        if i % 10000 == 0 {
+            print!(".");
+            use std::io::Write;
+            std::io::stdout().flush().unwrap();
+        }
     }
+
+    let duration = start.elapsed();
+    println!("\nDecoded {} transactions in {:?}", iterations, duration);
+    println!(
+        "Throughput: {:.2} tx/s",
+        iterations as f64 / duration.as_secs_f64()
+    );
 }
