@@ -237,9 +237,14 @@ async fn test_indexer_process_transaction_flow() {
                 "transaction": {
                     "signatures": [sig_str],
                     "message": {
-                        "accountKeys": [],
+                        "accountKeys": ["11111111111111111111111111111111"],
                         "instructions": [],
-                        "recentBlockhash": "11111111111111111111111111111111"
+                        "recentBlockhash": "11111111111111111111111111111111",
+                        "header": {
+                            "numRequiredSignatures": 1,
+                            "numReadonlySignedAccounts": 0,
+                            "numReadonlyUnsignedAccounts": 0
+                        }
                     }
                 },
                 "meta": {
@@ -272,7 +277,7 @@ async fn test_indexer_process_transaction_flow() {
     let indexer = SolanaIndexer::new_with_storage(config, storage.clone());
 
     // Run for a short time to allow processing
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(1), indexer.start()).await;
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(3), indexer.start()).await;
 
     // Verify transaction was marked as processed
     let is_processed = storage.is_processed(sig_str).await.unwrap();
@@ -295,6 +300,7 @@ async fn test_indexer_backfill() {
             "jsonrpc": "2.0",
             "result": {
                 "blockhash": "headerhash",
+                "previousBlockhash": "prevhash",
                 "blockTime": 1678888888,
                 "transactions": [
                     {
@@ -303,7 +309,12 @@ async fn test_indexer_backfill() {
                             "message": {
                                 "accountKeys": [program_id, "other_account"],
                                 "instructions": [],
-                                "recentBlockhash": "headerhash"
+                                "recentBlockhash": "headerhash",
+                                "header": {
+                                    "numRequiredSignatures": 1,
+                                    "numReadonlySignedAccounts": 0,
+                                    "numReadonlyUnsignedAccounts": 1
+                                }
                             }
                         },
                         "meta": {
@@ -348,7 +359,12 @@ async fn test_indexer_backfill() {
                     "message": {
                         "accountKeys": [program_id],
                         "instructions": [],
-                        "recentBlockhash": "headerhash"
+                        "recentBlockhash": "headerhash",
+                        "header": {
+                            "numRequiredSignatures": 1,
+                            "numReadonlySignedAccounts": 0,
+                            "numReadonlyUnsignedAccounts": 0
+                        }
                     }
                 },
                 "meta": {

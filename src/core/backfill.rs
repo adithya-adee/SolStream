@@ -232,7 +232,7 @@ impl BackfillEngine {
                 }
                 Err(e) => {
                     // Block might be missing or skipped (e.g. slot has no block)
-                    log::debug!("Slot {} skipped or fetch failed: {}", current_slot, e);
+                    println!("Slot {} skipped or fetch failed: {}", current_slot, e);
                 }
             }
 
