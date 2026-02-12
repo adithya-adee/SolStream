@@ -33,81 +33,16 @@ The core pipeline consists of the following stages:
 
 ### Architecture Flow Diagram
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    SDK Infrastructure                       │
-│                   (We Handle This)                          │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌───────────────────────┐
-│ Solana Network        │  ← RPC / WebSocket / Helius
-│ (RPC Endpoint)        │
-└───────────┬───────────┘
-            │
-            ▼
-┌──────────────────────────────────────┐
-│ 1. Input Source                      │  ← Poller / Subscriber
-│    • Fetch new signatures            │
-│    • Handle retries & rate limits    │
-└───────────┬──────────────────────────┘
-            │
-            ▼
-┌──────────────────────────────────────┐
-│ 2. Transaction Fetcher               │
-│    • Fetch full transaction details  │
-│    • Extract instructions            │
-└───────────┬──────────────────────────┘
-            │
-            ▼
-┌──────────────────────────────────────┐
-│ 3. Idempotency Check                 │
-│    • Skip if already processed       │
-└───────────┬──────────────────────────┘
-            │
-            ▼
-┌─────────────────────────────────────────────────────────────┐
-│              Developer Extension Point #1                    │
-│                                                              │
-│ 4. Decoder Registry                                          │
-│    ┌──────────────────────────────────────────────┐        │
-│    │ InstructionDecoder<T>                        │        │
-│    │ • Developer implements custom parsing        │        │
-│    │ • UiInstruction → Option<T>                  │        │
-│    │ • Can use IDL-generated types                │        │
-│    └──────────────────────────────────────────────┘        │
-│                                                              │
-│    Output: Vec<(discriminator, event_data)>                 │
-└─────────────────────────┬───────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│              Developer Extension Point #2                    │
-│                                                              │
-│ 5. Handler Registry                                          │
-│    ┌──────────────────────────────────────────────┐        │
-│    │ EventHandler<T>                              │        │
-│    │ • Developer implements business logic        │        │
-│    │ • T → Database/API/Custom Actions            │        │
-│    │ • initialize_schema() for DB setup           │        │
-│    └──────────────────────────────────────────────┘        │
-└─────────────────────────┬───────────────────────────────────┘
-                          │
-                          ▼
-┌──────────────────────────────────────┐
-│ 6. Mark as Processed                 │
-│    • Update idempotency tracker      │
-└───────────┬──────────────────────────┘
-            │
-            ▼
-┌───────────────────────┐
-│ External Services     │
-│ • PostgreSQL          │
-│ • Supabase            │
-│ • Custom APIs         │
-│ • Analytics           │
-└───────────────────────┘
-```
+See `docs/architecture_diagram.mermaid` for a visual representation of the architecture.
+
+The core pipeline consists of:
+
+1.  **Input Source (Poller / Subscriber):** Acquires transaction signatures.
+2.  **Transaction Fetcher:** Retrieves full transaction details.
+3.  **Backfill Engine:** Manages historical data indexing with reorg handling.
+4.  **Idempotency Tracker:** Prevents duplicate processing.
+5.  **Bounded Registries:** Routes data to decoders and handlers with memory safeguards.
+6.  **Confirmation & Persistence:** Marks transactions as processed.
 
 **Key Insight:** Developers only implement the two extension points (`InstructionDecoder<T>` and `EventHandler<T>`). The SDK handles everything else.
 

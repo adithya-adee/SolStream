@@ -1,0 +1,66 @@
+flowchart TD
+    %% Configuration Layer
+    subgraph Configuration [1. Configuration]
+        SIC[SolanaIndexerConfig]
+        RC[RegistryConfig]
+        BC[BackfillConfig]
+        SC[SourceConfig]
+        
+        SIC -->|Contains| RC
+        SIC -->|Contains| BC
+        SIC -->|Contains| SC
+    end
+
+    %% Core Orchestration Layer
+    subgraph Core [2. Core Orchestration]
+        SI[SolanaIndexer]
+        BE[BackfillEngine]
+        F[Transaction Fetcher]
+        D[Decoder]
+        S[StorageBackend]
+        
+        SI -->|Orchestrates| F
+        SI -->|Uses| D
+        SI -->|Uses| S
+        SI -->|Manages| BE
+        
+        BE -->|Uses| F
+        BE -->|Uses| D
+        BE -->|Uses| S
+        BE -->|Strategy| BS[BackfillStrategy]
+        BE -->|Tracking| BPT[ProgressTracker]
+    end
+
+    %% Registry Layer (Developer Extension Points)
+    subgraph Registries [3. Bounded Registries]
+        direction TB
+        subgraph Metrics [Shared Observability]
+            RM[RegistryMetrics]
+        end
+        
+        DR[Instruction Decoder Registry]
+        LDR[Log Decoder Registry]
+        ADR[Account Decoder Registry]
+        HR[Event Handler Registry]
+        
+        DR -.->|Reports| RM
+        LDR -.->|Reports| RM
+        ADR -.->|Reports| RM
+        HR -.->|Reports| RM
+        
+        SI -->|Routes Instructions| DR
+        SI -->|Routes Logs| LDR
+        SI -->|Routes Accounts| ADR
+        SI -->|Dispatches Events| HR
+        BE -->|Routes Data| DR
+    end
+
+    %% Data Flow & External Systems
+    subgraph Infrastructure [4. Infrastructure]
+        RPC((Solana RPC / WebSocket))
+        DB[(PostgreSQL / Storage)]
+    end
+
+    F -->|Fetch Blocks/Tx| RPC
+    S -->|Idempotency Check/Persist| DB
+    HR -->|Execute Business Logic| DB

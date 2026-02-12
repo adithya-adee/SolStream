@@ -2,11 +2,14 @@
 name = "solana-indexer"
 version = "0.1.0"
 edition = "2024"
-default-run = "solana-indexer"
-autobenches = false
+description = "A developer-centric SDK for Solana blockchain data indexing"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/adithya-adee/solana-indexer"
+keywords = ["solana", "indexer", "blockchain", "web3"]
+categories = ["cryptography::cryptocurrencies"]
+readme = "README.md"
 
 [dependencies]
-honggfuzz = "0.5"
 anchor-lang = "0.30"
 async-trait = "0.1.89"
 borsh = "1.0"
@@ -14,8 +17,6 @@ chrono = "0.4"
 colored = "2.2"
 dotenvy = "0.15.7"
 futures-util = "0.3"
-arbitrary = { version = "1.0", features = ["derive"] }
-quinn-proto = { version = "0.10", features = ["arbitrary"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 sha2 = "0.10"
@@ -27,7 +28,6 @@ thiserror = "2.0.18"
 tokio = { version = "1.49.0", features = ["full"] }
 tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
 rayon = "1.11.0"
-wiremock = "0.6.5"
 log = "0.4.29"
 
 [[bin]]
@@ -47,3 +47,7 @@ name = "throughput_bench"
 path = "benches/throughput_bench.rs"
 
 [dev-dependencies]
+honggfuzz = "0.5"
+arbitrary = { version = "1.0", features = ["derive"] }
+quinn-proto = { version = "0.10", features = ["arbitrary"] }
+wiremock = "0.6.5"
