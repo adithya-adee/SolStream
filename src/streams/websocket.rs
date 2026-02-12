@@ -57,7 +57,7 @@ enum WebSocketState {
     Connected {
         #[allow(dead_code)] // Kept for future unsubscribe functionality
         subscription_id: u64,
-        receiver: tokio::sync::mpsc::UnboundedReceiver<Signature>,
+        receiver: tokio::sync::mpsc::UnboundedReceiver<crate::streams::TransactionEvent>,
     },
 }
 
@@ -75,11 +75,19 @@ struct LogsNotificationParams {
 #[derive(Debug, Deserialize)]
 struct LogsNotificationResult {
     pub(super) value: LogsNotificationValue,
+    pub(super) context: LogsNotificationContext,
+}
+
+#[derive(Debug, Deserialize)]
+struct LogsNotificationContext {
+    pub(super) slot: u64,
 }
 
 #[derive(Debug, Deserialize)]
 struct LogsNotificationValue {
     pub(super) signature: String,
+    pub(super) logs: Vec<String>,
+    pub(super) err: Option<serde_json::Value>,
 }
 
 /// Subscription response from Solana
@@ -171,7 +179,7 @@ impl WebSocketSource {
             &format!("WebSocket subscribed (ID: {subscription_id})"),
         );
 
-        // Create channel for signatures
+        // Create channel for events
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
 
         // Spawn background task to handle incoming messages
@@ -182,7 +190,13 @@ impl WebSocketSource {
                     if let Ok(sig) =
                         Signature::from_str(&notification.params.result.value.signature)
                     {
-                        let _ = tx.send(sig);
+                        let event = crate::streams::TransactionEvent::LogEvent {
+                            signature: sig,
+                            logs: notification.params.result.value.logs,
+                            err: notification.params.result.value.err,
+                            slot: notification.params.result.context.slot,
+                        };
+                        let _ = tx.send(event);
                     }
                 }
             }
@@ -222,28 +236,28 @@ impl WebSocketSource {
 
 #[async_trait]
 impl TransactionSource for WebSocketSource {
-    async fn next_batch(&mut self) -> Result<Vec<Signature>> {
+    async fn next_batch(&mut self) -> Result<Vec<crate::streams::TransactionEvent>> {
         self.ensure_connected().await?;
 
         match &mut self.state {
             WebSocketState::Connected { receiver, .. } => {
-                let mut signatures = Vec::new();
+                let mut events = Vec::new();
 
-                // Wait for at least one signature
-                if let Some(sig) = receiver.recv().await {
-                    signatures.push(sig);
+                // Wait for at least one event
+                if let Some(event) = receiver.recv().await {
+                    events.push(event);
 
-                    // Collect any additional signatures that are immediately available
-                    while let Ok(sig) = receiver.try_recv() {
-                        signatures.push(sig);
-                        if signatures.len() >= 10 {
+                    // Collect any additional events that are immediately available
+                    while let Ok(event) = receiver.try_recv() {
+                        events.push(event);
+                        if events.len() >= 10 {
                             // Batch size limit
                             break;
                         }
                     }
                 }
 
-                Ok(signatures)
+                Ok(events)
             }
             WebSocketState::Disconnected => Err(SolanaIndexerError::InternalError(
                 "WebSocket not connected".to_string(),
@@ -305,5 +319,6 @@ mod tests {
             notification.params.result.value.signature,
             "5h6xBEauJ3PK6rJ9pG4Q8Xc6rJ9pG4Q8Xc6rJ9pG4Q8Xc6rJ9pG4Q8Xc6rJ9pG4Q8Xc6rJ9pG4Q8Xc"
         );
+        assert_eq!(notification.params.result.value.logs.len(), 2);
     }
 }

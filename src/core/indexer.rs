@@ -204,6 +204,93 @@ impl SolanaIndexer {
         self.schema_initializers.push(initializer);
     }
 
+    /// Registers a typed instruction decoder.
+    ///
+    /// This generic method automatically handles the boxing and type erasure required by the registry,
+    /// simplifying the API for developers.
+    ///
+    /// # Arguments
+    ///
+    /// * `program_id` - The program ID associated with this decoder
+    /// * `decoder` - The typed decoder instance
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use solana_indexer::SolanaIndexer;
+    /// # struct MyDecoder;
+    /// # struct MyEvent;
+    /// # impl solana_indexer::InstructionDecoder<MyEvent> for MyDecoder { fn decode(&self, _: &solana_transaction_status::UiInstruction) -> Option<MyEvent> { None } }
+    /// # impl solana_indexer::EventDiscriminator for MyEvent { fn discriminator() -> [u8; 8] { [0; 8] } }
+    /// # impl borsh::BorshSerialize for MyEvent { fn serialize<W: std::io::Write>(&self, _: &mut W) -> std::io::Result<()> { Ok(()) } }
+    /// # fn example(indexer: &mut SolanaIndexer) {
+    /// indexer.register_decoder("program_id", MyDecoder);
+    /// # }
+    /// ```
+    pub fn register_decoder<D, E>(&mut self, program_id: impl Into<String>, decoder: D)
+    where
+        D: crate::types::traits::InstructionDecoder<E> + 'static,
+        E: crate::types::events::EventDiscriminator + borsh::BorshSerialize + Send + Sync + 'static,
+    {
+        use crate::types::traits::DynamicInstructionDecoder;
+        let boxed_typed: Box<dyn crate::types::traits::InstructionDecoder<E>> = Box::new(decoder);
+        // Box<dyn InstructionDecoder<E>> automatically implements DynamicInstructionDecoder
+        // but we need to box it again to match the registry's expectation of Box<dyn DynamicInstructionDecoder>
+        // Use an explicit cast/coercion to ensure correct vtable dispatch
+        let boxed_dynamic: Box<dyn DynamicInstructionDecoder> = Box::new(boxed_typed);
+        self.decoder_registry_mut()
+            .register(program_id.into(), boxed_dynamic)
+            .expect("Failed to register decoder");
+    }
+
+    /// Registers a typed event handler.
+    ///
+    /// This generic method automatically handles the boxing and type erasure required by the registry.
+    ///
+    /// # Arguments
+    ///
+    /// * `handler` - The typed handler instance
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use solana_indexer::SolanaIndexer;
+    /// # struct MyHandler;
+    /// # struct MyEvent;
+    /// # impl solana_indexer::EventHandler<MyEvent> for MyHandler { async fn handle(&self, _: MyEvent, _: &sqlx::PgPool, _: &str) -> crate::utils::error::Result<()> { Ok(()) } }
+    /// # impl solana_indexer::EventDiscriminator for MyEvent { fn discriminator() -> [u8; 8] { [0; 8] } }
+    /// # impl borsh::BorshDeserialize for MyEvent { fn deserialize(buf: &mut &[u8]) -> std::io::Result<Self> { Ok(MyEvent) } }
+    /// # fn example(indexer: &mut SolanaIndexer) {
+    /// indexer.register_handler(MyHandler);
+    /// # }
+    /// ```
+    pub fn register_handler<H, E>(&mut self, handler: H)
+    where
+        H: crate::types::traits::EventHandler<E> + 'static,
+        E: crate::types::events::EventDiscriminator
+            + borsh::BorshDeserialize
+            + Send
+            + Sync
+            + 'static,
+    {
+        use crate::types::traits::DynamicEventHandler;
+        let boxed_typed: Box<dyn crate::types::traits::EventHandler<E>> = Box::new(handler);
+        let boxed_dynamic: Box<dyn DynamicEventHandler> = Box::new(boxed_typed);
+
+        // We propagate any error from register (e.g. registry full) by panicking or handling?
+        // The original method returned Result but this convenience method swallows it or panics?
+        // Better to unwrap or changing API to return Result?
+        // The release assessment example usage showed no Result: `indexer.register_decoder(...)`
+        // But `register` returns generic Result via `?`.
+        // Let's make these methods return nothing and panic on error for simplicity (convention in builders/setup),
+        // or log error. Given "Painful API", let's keep it simple.
+        // Actually, `register` on registries might fail if full.
+        // Let's just unwrap/expect for now as this is setup phase.
+        self.handler_registry_mut()
+            .register(E::discriminator(), boxed_dynamic)
+            .expect("Failed to register handler");
+    }
+
     /// Returns a reference to the decoder for registering event discriminators.
     ///
     /// # Panics
@@ -325,7 +412,10 @@ impl SolanaIndexer {
                     logging::LogLevel::Info,
                     "Strategy: Latest (Fetching checkpoint from RPC)",
                 );
-                self.fetch_signatures(None).await?.first().copied()
+                self.fetch_signatures(None)
+                    .await?
+                    .first()
+                    .map(|e| e.signature())
             }
             StartStrategy::Signature(sig) => {
                 logging::log(
@@ -350,7 +440,10 @@ impl SolanaIndexer {
                         logging::LogLevel::Warning,
                         "No previous state found. Defaulting to Latest.",
                     );
-                    self.fetch_signatures(None).await?.first().copied()
+                    self.fetch_signatures(None)
+                        .await?
+                        .first()
+                        .map(|e| e.signature())
                 }
             }
         };
@@ -444,12 +537,57 @@ impl SolanaIndexer {
                     let start_time = std::time::Instant::now();
                     let mut processed_count = 0;
 
-                    for signature in signatures {
+                    for event in signatures {
+                        let signature = event.signature();
                         let sig_str = signature.to_string();
 
                         // Check if already processed (idempotency)
                         if self.storage.is_processed(&sig_str).await? {
                             continue;
+                        }
+
+                        // Optimization for LogEvents
+                        match &event {
+                            crate::streams::TransactionEvent::LogEvent {
+                                logs,
+                                err: None,
+                                slot,
+                                ..
+                            } if self.config.indexing_mode.logs
+                                && !self.config.indexing_mode.inputs
+                                && !self.config.indexing_mode.accounts =>
+                            {
+                                // Parse logs directly
+                                match self.decoder.parse_event_logs(logs) {
+                                    Ok(parsed_events) => {
+                                        let decoded =
+                                            self.log_decoder_registry.decode_logs(&parsed_events);
+                                        // Handle decoded events
+                                        for (discriminator, event_data) in decoded {
+                                            self.handler_registry
+                                                .handle(
+                                                    &discriminator,
+                                                    &event_data,
+                                                    self.storage.pool(),
+                                                    &sig_str,
+                                                )
+                                                .await?;
+                                        }
+                                        // Mark as processed
+                                        self.storage.mark_processed(&sig_str, *slot).await?;
+
+                                        processed_count += 1;
+                                        continue;
+                                    }
+                                    Err(e) => {
+                                        logging::log_error(
+                                            "Log parsing error",
+                                            &format!("{}: {}", sig_str, e),
+                                        );
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
 
                         // Process transaction
@@ -508,12 +646,59 @@ impl SolanaIndexer {
                 Ok(signatures) => {
                     let mut processed_count = 0;
 
-                    for signature in signatures {
+                    for event in signatures {
+                        let signature = event.signature();
                         let sig_str = signature.to_string();
 
                         // Check if already processed (idempotency)
                         if self.storage.is_processed(&sig_str).await? {
                             continue;
+                        }
+
+                        // Optimization: If indexing mode is Logs Only, decode logs directly
+                        match &event {
+                            crate::streams::TransactionEvent::LogEvent {
+                                logs,
+                                err: None,
+                                slot,
+                                ..
+                            } if self.config.indexing_mode.logs
+                                && !self.config.indexing_mode.inputs
+                                && !self.config.indexing_mode.accounts =>
+                            {
+                                // Parse logs
+                                match self.decoder.parse_event_logs(logs) {
+                                    Ok(parsed_events) => {
+                                        let decoded =
+                                            self.log_decoder_registry.decode_logs(&parsed_events);
+                                        // Handle decoded events
+                                        for (discriminator, event_data) in decoded {
+                                            self.handler_registry
+                                                .handle(
+                                                    &discriminator,
+                                                    &event_data,
+                                                    self.storage.pool(),
+                                                    &sig_str,
+                                                )
+                                                .await?;
+                                        }
+                                        // Mark as processed
+                                        self.storage.mark_processed(&sig_str, *slot).await?;
+
+                                        // Skip full processing
+                                        processed_count += 1;
+                                        continue;
+                                    }
+                                    Err(e) => {
+                                        logging::log_error(
+                                            "Log parsing error",
+                                            &format!("{}: {}", sig_str, e),
+                                        );
+                                        // Fallback to full fetch?
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
 
                         // Acquire permit
@@ -593,13 +778,14 @@ impl SolanaIndexer {
         }
 
         // Update last signature for next poll
-        if let Some(first_sig) = signatures.first() {
-            *last_signature = Some(*first_sig);
+        if let Some(first_event) = signatures.first() {
+            *last_signature = Some(first_event.signature());
         }
 
         let mut processed_count = 0;
 
-        for signature in signatures {
+        for event in signatures {
+            let signature = event.signature();
             let sig_str = signature.to_string();
 
             // Check if already processed (idempotency)
@@ -613,6 +799,7 @@ impl SolanaIndexer {
                     processed_count += 1;
                 }
                 Err(e) => {
+                    logging::log_error("Transaction error", &format!("{sig_str}: {e}"));
                     eprintln!("Error processing transaction {sig_str}: {e}");
                     // Continue with next transaction
                 }
@@ -622,7 +809,10 @@ impl SolanaIndexer {
         Ok(processed_count)
     }
 
-    async fn fetch_signatures(&self, last_signature: Option<&Signature>) -> Result<Vec<Signature>> {
+    async fn fetch_signatures(
+        &self,
+        last_signature: Option<&Signature>,
+    ) -> Result<Vec<crate::streams::TransactionEvent>> {
         use solana_client::rpc_client::RpcClient;
         use solana_sdk::commitment_config::CommitmentConfig;
 
@@ -647,12 +837,19 @@ impl SolanaIndexer {
                 )
                 .map_err(|e| crate::utils::error::SolanaIndexerError::RpcError(e.to_string()))?;
 
-            let signatures: Vec<Signature> = sigs
+            let events: Vec<crate::streams::TransactionEvent> = sigs
                 .into_iter()
-                .filter_map(|s| Signature::from_str(&s.signature).ok())
+                .filter_map(|s| {
+                    Signature::from_str(&s.signature).ok().map(|sig| {
+                        crate::streams::TransactionEvent::Signature {
+                            signature: sig,
+                            slot: s.slot,
+                        }
+                    })
+                })
                 .collect();
 
-            Ok(signatures)
+            Ok(events)
         })
         .await
         .map_err(|e| crate::utils::error::SolanaIndexerError::InternalError(e.to_string()))?

@@ -120,19 +120,88 @@ impl Decoder {
     /// # Ok(())
     /// # }
     /// ```
+    /// Parses event logs from a transaction.
+    ///
+    /// This method extracts and categorizes event logs from transaction log messages.
+    /// It maintains a program ID stack to correctly associate logs and data with
+    /// the program that emitted them.
+    ///
+    /// # Arguments
+    ///
+    /// * `logs` - Transaction log messages
+    ///
+    /// # Errors
+    ///
+    /// Returns `SolanaIndexerError::DecodingError` if log parsing fails.
+    ///
+    /// # Returns
+    ///
+    /// A vector of parsed event logs with their types and data.
     pub fn parse_event_logs(&self, logs: &[String]) -> Result<Vec<ParsedEvent>> {
         let mut events = Vec::new();
+        let mut program_stack: Vec<Pubkey> = Vec::new();
 
         for log in logs {
-            if let Some(event) = Self::parse_single_log(log) {
-                events.push(event);
+            // Check for Program invoke
+            if log.contains("invoke [") {
+                if let Some(program_id) = Self::extract_program_id(log) {
+                    program_stack.push(program_id);
+                    events.push(ParsedEvent {
+                        event_type: EventType::ProgramInvoke,
+                        program_id: Some(program_id),
+                        data: None,
+                    });
+                }
+                continue;
+            }
+
+            // Check for Program result (success or failed)
+            if log.contains(" success") || log.contains(" failed") {
+                // We could verify the ID matches, but for now just pop
+                if Self::extract_program_id_from_result(log).is_some() {
+                    program_stack.pop();
+                }
+                continue;
+            }
+
+            // Program data
+            if let Some(stripped) = log.strip_prefix("Program data: ") {
+                let current_program = program_stack.last().copied();
+                events.push(ParsedEvent {
+                    event_type: EventType::ProgramData,
+                    program_id: current_program,
+                    data: Some(stripped.to_string()),
+                });
+                continue;
+            }
+
+            // Program log
+            if let Some(stripped) = log.strip_prefix("Program log: ") {
+                let current_program = program_stack.last().copied();
+                events.push(ParsedEvent {
+                    event_type: EventType::ProgramLog,
+                    program_id: current_program,
+                    data: Some(stripped.to_string()),
+                });
+                continue;
             }
         }
 
         Ok(events)
     }
 
+    /// Extracts program ID from a result log (success/failed).
+    fn extract_program_id_from_result(log: &str) -> Option<Pubkey> {
+        let parts: Vec<&str> = log.split_whitespace().collect();
+        if parts.len() >= 2 && parts[0] == "Program" {
+            parts[1].parse().ok()
+        } else {
+            None
+        }
+    }
+
     /// Parses a single log message.
+    #[allow(dead_code)]
     fn parse_single_log(log: &str) -> Option<ParsedEvent> {
         // Program invocation
         if log.contains("invoke [")

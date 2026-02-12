@@ -17,7 +17,7 @@ use super::TransactionSource;
 
 /// Helius WebSocket source for acquiring transaction signatures.
 pub struct HeliusSource {
-    receiver: mpsc::Receiver<Signature>,
+    receiver: mpsc::Receiver<crate::streams::TransactionEvent>,
     source_name: String,
 }
 
@@ -31,8 +31,6 @@ impl HeliusSource {
             })?
             .to_string();
 
-        // API key is already embedded in the WS URL by config.helius_ws_url()
-        // so we don't need to extract it separately here unless needed for other API calls.
         if !matches!(config.source, crate::config::SourceConfig::Helius { .. }) {
             return Err(SolanaIndexerError::ConfigError(
                 "Not a Helius config".to_string(),
@@ -43,102 +41,114 @@ impl HeliusSource {
         let (sender, receiver) = mpsc::channel(1000); // Buffer size
 
         // Spawn background task to handle WS connection
-        tokio::spawn(async move {
-            loop {
-                println!("Connecting to Helius WS: {}", ws_url);
-                match connect_async(&ws_url).await {
-                    Ok((ws_stream, _)) => {
-                        println!("Connected to Helius WS");
-                        let (mut write, mut read) = ws_stream.split();
-
-                        // Subscribe to logs for the program
-                        // Reference: https://docs.helius.dev/solana-rpc-nodes/websocket-methods
-                        let subscribe_msg = json!({
-                            "jsonrpc": "2.0",
-                            "id": 1,
-                            "method": "logsSubscribe",
-                            "params": [
-                                {
-                                    "mentions": [program_id]
-                                },
-                                {
-                                    "commitment": "confirmed"
-                                }
-                            ]
-                        });
-
-                        if let Err(e) = write.send(Message::Text(subscribe_msg.to_string())).await {
-                            eprintln!("Failed to send subscribe message: {}", e);
-                            sleep(Duration::from_secs(5)).await;
-                            continue;
-                        }
-
-                        while let Some(msg) = read.next().await {
-                            match msg {
-                                Ok(Message::Text(text)) => {
-                                    // Parse keys from log notification
-                                    if let Ok(parsed) =
-                                        serde_json::from_str::<HeliusLogNotification>(&text)
-                                        && let Some(params) = parsed.params
-                                    {
-                                        let signature_str = params.result.value.signature;
-                                        if let Ok(sig) = Signature::from_str(&signature_str)
-                                            && sender.send(sig).await.is_err()
-                                        {
-                                            break; // Receiver dropped, stop everything
-                                        }
-                                    }
-                                }
-                                Ok(Message::Close(_)) => break,
-                                Err(e) => {
-                                    eprintln!("WS error: {}", e);
-                                    break;
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to connect to Helius WS: {}", e);
-                    }
-                }
-
-                // Reconnect strategy
-                println!("Reconnecting to Helius WS in 5 seconds...");
-                sleep(Duration::from_secs(5)).await;
-            }
-        });
+        tokio::spawn(Self::run_stream(ws_url, program_id, sender));
 
         Ok(Self {
             receiver,
             source_name: "Helius WebSocket".to_string(),
         })
     }
+
+    async fn run_stream(
+        ws_url: String,
+        program_id: String,
+        sender: mpsc::Sender<crate::streams::TransactionEvent>,
+    ) {
+        loop {
+            println!("Connecting to Helius WS: {}", ws_url);
+            match connect_async(&ws_url).await {
+                Ok((ws_stream, _)) => {
+                    println!("Connected to Helius WS");
+                    let (mut write, mut read) = ws_stream.split();
+
+                    // Subscribe to logs for the program
+                    // Reference: https://docs.helius.dev/solana-rpc-nodes/websocket-methods
+                    let subscribe_msg = json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "logsSubscribe",
+                        "params": [
+                            {
+                                "mentions": [program_id]
+                            },
+                            {
+                                "commitment": "confirmed"
+                            }
+                        ]
+                    });
+
+                    if let Err(e) = write.send(Message::Text(subscribe_msg.to_string())).await {
+                        eprintln!("Failed to send subscribe message: {}", e);
+                        sleep(Duration::from_secs(5)).await;
+                        continue;
+                    }
+
+                    while let Some(msg) = read.next().await {
+                        match msg {
+                            Ok(Message::Text(text)) => {
+                                // Parse keys from log notification
+                                if let Ok(HeliusLogNotification {
+                                    params: Some(params),
+                                }) = serde_json::from_str::<HeliusLogNotification>(&text)
+                                {
+                                    let signature_str = params.result.value.signature;
+                                    if let Ok(signature) = Signature::from_str(&signature_str) {
+                                        let event = crate::streams::TransactionEvent::LogEvent {
+                                            signature,
+                                            logs: params.result.value.logs,
+                                            err: params.result.value.err,
+                                            slot: params.result.context.slot,
+                                        };
+                                        if sender.send(event).await.is_err() {
+                                            return; // Receiver dropped, stop everything
+                                        }
+                                    }
+                                }
+                            }
+                            Ok(Message::Close(_)) => break,
+                            Err(e) => {
+                                eprintln!("WS error: {}", e);
+                                break;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to connect to Helius WS: {}", e);
+                }
+            }
+
+            // Reconnect strategy
+            println!("Reconnecting to Helius WS in 5 seconds...");
+            sleep(Duration::from_secs(5)).await;
+        }
+    }
 }
 
 #[async_trait]
 impl TransactionSource for HeliusSource {
-    async fn next_batch(&mut self) -> Result<Vec<Signature>> {
-        // Collect available signatures, wait if empty
-        let mut signatures = Vec::new();
+    async fn next_batch(&mut self) -> Result<Vec<crate::streams::TransactionEvent>> {
+        // Collect available events, wait if empty
+        let mut events = Vec::new();
 
         // Block for at least one
-        if let Some(sig) = self.receiver.recv().await {
-            signatures.push(sig);
+        if let Some(event) = self.receiver.recv().await {
+            events.push(event);
         } else {
             // Channel closed
             return Ok(vec![]);
         }
 
         // Drain others if available (up to 100 to match batch size)
-        while let Ok(sig) = self.receiver.try_recv() {
-            signatures.push(sig);
-            if signatures.len() >= 100 {
+        while let Ok(event) = self.receiver.try_recv() {
+            events.push(event);
+            if events.len() >= 100 {
                 break;
             }
         }
 
-        Ok(signatures)
+        Ok(events)
     }
 
     fn source_name(&self) -> &str {
@@ -159,9 +169,17 @@ struct HeliusLogParams {
 #[derive(Deserialize)]
 struct HeliusLogResult {
     value: HeliusLogValue,
+    context: HeliusLogContext,
+}
+
+#[derive(Deserialize)]
+struct HeliusLogContext {
+    slot: u64,
 }
 
 #[derive(Deserialize)]
 struct HeliusLogValue {
     signature: String,
+    logs: Vec<String>,
+    err: Option<serde_json::Value>,
 }
