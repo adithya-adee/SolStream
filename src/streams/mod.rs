@@ -63,5 +63,6 @@ pub trait TransactionSource: Send + Sync {
 }
 
 pub mod helius;
+pub mod hybrid;
 pub mod poller;
 pub mod websocket;

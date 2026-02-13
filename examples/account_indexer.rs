@@ -52,7 +52,13 @@ pub struct UserProfileHandler;
 
 #[async_trait]
 impl EventHandler<UserProfile> for UserProfileHandler {
-    async fn handle(&self, event: UserProfile, db: &PgPool, signature: &str) -> Result<()> {
+    async fn handle(
+        &self,
+        event: UserProfile,
+        context: &solana_indexer::TxMetadata,
+        db: &PgPool,
+    ) -> Result<()> {
+        let signature = &context.signature;
         println!(
             "✅ Found UserProfile in tx {}: {} (Rep: {})",
             signature, event.username, event.reputation

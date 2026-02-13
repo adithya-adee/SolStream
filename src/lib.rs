@@ -140,6 +140,7 @@ pub use types::events::{
     DepositEvent, EventDiscriminator, EventType, ParsedEvent, TransferEvent, WithdrawEvent,
     calculate_discriminator,
 };
+pub use types::metadata::{TokenBalanceInfo, TxMetadata};
 pub use types::traits::{
     AccountDecoder, DynamicAccountDecoder, DynamicEventHandler, DynamicInstructionDecoder,
     EventHandler, HandlerRegistry, InstructionDecoder, LogDecoder, SchemaInitializer,

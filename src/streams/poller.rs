@@ -281,6 +281,7 @@ mod tests {
             backfill: Default::default(),
             registry: Default::default(),
             stale_tentative_threshold: 1000,
+            worker_threads: 10,
         };
 
         let poller = Poller::new(config);

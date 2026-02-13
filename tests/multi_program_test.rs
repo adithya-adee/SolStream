@@ -178,6 +178,9 @@ async fn test_multi_program_indexing() {
 
     let _ = tokio::join!(t1, t2);
 
+    // Allow background tasks (spawned by poll_and_process) to complete their DB writes
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
     // Verify both are processed
     let p1 = storage.is_processed(sig1).await.unwrap();
     let p2 = storage.is_processed(sig2).await.unwrap();

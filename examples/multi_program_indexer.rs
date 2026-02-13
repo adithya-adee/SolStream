@@ -59,9 +59,10 @@ impl EventHandler<SystemTransferEvent> for SystemTransferHandler {
     async fn handle(
         &self,
         event: SystemTransferEvent,
+        context: &solana_indexer::TxMetadata,
         _db: &PgPool,
-        signature: &str,
     ) -> Result<(), SolanaIndexerError> {
+        let signature = &context.signature;
         println!(
             "[System] Transfer: {} -> {} ({} lamports) | Sig: {:.8}...",
             event.from, event.to, event.amount, signature
@@ -124,9 +125,10 @@ impl EventHandler<MemoEvent> for MemoHandler {
     async fn handle(
         &self,
         event: MemoEvent,
+        context: &solana_indexer::TxMetadata,
         _db: &PgPool,
-        signature: &str,
     ) -> Result<(), SolanaIndexerError> {
+        let signature = &context.signature;
         println!(
             "[Memo] Message: \"{}\" | Sig: {:.8}...",
             event.message, signature

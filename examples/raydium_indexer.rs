@@ -80,9 +80,10 @@ impl EventHandler<RaydiumSwapEvent> for RaydiumSwapHandler {
     async fn handle(
         &self,
         event: RaydiumSwapEvent,
+        context: &solana_indexer::TxMetadata,
         _db: &PgPool,
-        signature: &str,
     ) -> Result<(), SolanaIndexerError> {
+        let signature = &context.signature;
         println!("🦄 Raydium Swap Detected! Sig: {:.8}...", signature);
         println!(
             "   In: {} | Min Out: {} | User: {}",

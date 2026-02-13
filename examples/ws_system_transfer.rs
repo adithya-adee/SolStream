@@ -110,9 +110,10 @@ impl EventHandler<SystemTransferEvent> for SystemTransferHandler {
     async fn handle(
         &self,
         event: SystemTransferEvent,
+        context: &solana_indexer::TxMetadata,
         db: &PgPool,
-        signature: &str,
     ) -> Result<(), SolanaIndexerError> {
+        let signature = &context.signature;
         let sol_amount = event.amount as f64 / 1_000_000_000.0;
 
         println!(

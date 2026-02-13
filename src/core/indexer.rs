@@ -13,7 +13,10 @@ use crate::{
     },
     storage::{Storage, StorageBackend},
     streams::{TransactionSource, helius::HeliusSource, websocket::WebSocketSource},
-    types::traits::{HandlerRegistry, SchemaInitializer},
+    types::{
+        metadata::{TokenBalanceInfo, TxMetadata},
+        traits::{HandlerRegistry, SchemaInitializer},
+    },
     utils::{
         error::{Result, SolanaIndexerError},
         logging,
@@ -22,6 +25,7 @@ use crate::{
 use solana_sdk::signature::Signature;
 use std::str::FromStr;
 use std::sync::Arc;
+use tokio::sync::Semaphore;
 use tokio::time::{Duration, interval};
 
 /// Main indexer that orchestrates the complete pipeline.
@@ -425,6 +429,7 @@ impl SolanaIndexer {
                     self.process_rpc_source().await
                 }
             }
+            SourceConfig::Hybrid { .. } => self.process_hybrid_source().await,
         }
     }
 
@@ -624,17 +629,31 @@ impl SolanaIndexer {
                                     Ok(parsed_events) => {
                                         let decoded =
                                             self.log_decoder_registry.decode_logs(&parsed_events);
+
+                                        // Construct partial context for log optimization
+                                        let context = TxMetadata {
+                                            slot: *slot,
+                                            block_time: None, // Not available in log event
+                                            fee: 0,           // Not available
+                                            pre_balances: vec![],
+                                            post_balances: vec![],
+                                            pre_token_balances: vec![],
+                                            post_token_balances: vec![],
+                                            signature: sig_str.clone(),
+                                        };
+
                                         // Handle decoded events
                                         for (discriminator, event_data) in decoded {
                                             self.handler_registry
                                                 .handle(
                                                     &discriminator,
                                                     &event_data,
+                                                    &context,
                                                     self.storage.pool(),
-                                                    &sig_str,
                                                 )
                                                 .await?;
                                         }
+
                                         // Mark as processed
                                         self.storage.mark_processed(&sig_str, *slot).await?;
 
@@ -676,6 +695,171 @@ impl SolanaIndexer {
                 }
             }
         }
+        Ok(())
+    }
+
+    async fn process_hybrid_source(self) -> Result<()> {
+        logging::log_startup(
+            &self.config.program_id.to_string(),
+            self.config.rpc_url(),
+            0, // Real-time + Gap filling
+        );
+
+        // Run schema initializers
+        for initializer in &self.schema_initializers {
+            logging::log(logging::LogLevel::Info, "Initializing database schema...");
+            initializer.initialize(self.storage.pool()).await?;
+        }
+
+        // Extract Hybrid config
+        let (ws_url, rpc_url, poll_interval, reconnect_delay, gap_threshold) =
+            match &self.config.source {
+                SourceConfig::Hybrid {
+                    ws_url,
+                    rpc_url,
+                    poll_interval_secs,
+                    reconnect_delay_secs,
+                    gap_threshold_slots,
+                } => (
+                    ws_url.clone(),
+                    rpc_url.clone(),
+                    *poll_interval_secs,
+                    *reconnect_delay_secs,
+                    *gap_threshold_slots,
+                ),
+                _ => {
+                    return Err(crate::utils::error::SolanaIndexerError::ConfigError(
+                        "Invalid source config".to_string(),
+                    ));
+                }
+            };
+
+        logging::log(
+            logging::LogLevel::Info,
+            &format!("Starting indexer loop (Hybrid: WS={ws_url}, RPC={rpc_url})...\n"),
+        );
+
+        let mut source = crate::streams::hybrid::HybridSource::new(
+            ws_url,
+            rpc_url,
+            self.config.program_id,
+            poll_interval,
+            reconnect_delay,
+            gap_threshold,
+        );
+
+        loop {
+            if self.cancellation_token.is_cancelled() {
+                logging::log(logging::LogLevel::Info, "Graceful shutdown complete.");
+                break;
+            }
+
+            let batch = tokio::select! {
+                 _ = self.cancellation_token.cancelled() => {
+                    logging::log(logging::LogLevel::Info, "Graceful shutdown initiated...");
+                    break;
+                 }
+                 res = source.next_batch() => res,
+            };
+
+            match batch {
+                Ok(signatures) => {
+                    let start_time = std::time::Instant::now();
+                    let mut processed_count = 0;
+
+                    for event in signatures {
+                        let signature = event.signature();
+                        let sig_str = signature.to_string();
+
+                        // Check if already processed (idempotency)
+                        if self.storage.is_processed(&sig_str).await? {
+                            continue;
+                        }
+
+                        // Optimization for LogEvents
+                        match &event {
+                            crate::streams::TransactionEvent::LogEvent {
+                                logs,
+                                err: None,
+                                slot,
+                                ..
+                            } if self.config.indexing_mode.logs
+                                && !self.config.indexing_mode.inputs
+                                && !self.config.indexing_mode.accounts =>
+                            {
+                                // Parse logs directly
+                                match self.decoder.parse_event_logs(logs) {
+                                    Ok(parsed_events) => {
+                                        let decoded =
+                                            self.log_decoder_registry.decode_logs(&parsed_events);
+
+                                        // Construct partial context for log optimization
+                                        let context = TxMetadata {
+                                            slot: *slot,
+                                            block_time: None, // Not available in log event
+                                            fee: 0,           // Not available
+                                            pre_balances: vec![],
+                                            post_balances: vec![],
+                                            pre_token_balances: vec![],
+                                            post_token_balances: vec![],
+                                            signature: sig_str.clone(),
+                                        };
+
+                                        // Handle decoded events
+                                        for (discriminator, event_data) in decoded {
+                                            self.handler_registry
+                                                .handle(
+                                                    &discriminator,
+                                                    &event_data,
+                                                    &context,
+                                                    self.storage.pool(),
+                                                )
+                                                .await?;
+                                        }
+
+                                        // Mark as processed
+                                        self.storage.mark_processed(&sig_str, *slot).await?;
+
+                                        processed_count += 1;
+                                        continue;
+                                    }
+                                    Err(e) => {
+                                        logging::log_error(
+                                            "Log parsing error",
+                                            &format!("{}: {}", sig_str, e),
+                                        );
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+
+                        // Process transaction
+                        match self.process_transaction(&signature).await {
+                            Ok(()) => {
+                                processed_count += 1;
+                            }
+                            Err(e) => {
+                                logging::log_error("Transaction error", &format!("{sig_str}: {e}"));
+                            }
+                        }
+                    }
+
+                    if processed_count > 0 {
+                        let duration_ms =
+                            u64::try_from(start_time.elapsed().as_millis()).unwrap_or(u64::MAX);
+                        logging::log_batch(processed_count, processed_count, duration_ms);
+                        self.report_metrics();
+                    }
+                }
+                Err(e) => {
+                    logging::log_error("Hybrid Source Error", &e.to_string());
+                    // Reconnection/Retries handled internally by HybridSource (WS/RPC)
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -747,14 +931,27 @@ impl SolanaIndexer {
                                     Ok(parsed_events) => {
                                         let decoded =
                                             self.log_decoder_registry.decode_logs(&parsed_events);
+
+                                        // Construct partial context for log optimization
+                                        let context = TxMetadata {
+                                            slot: *slot,
+                                            block_time: None, // Not available in log event
+                                            fee: 0,           // Not available
+                                            pre_balances: vec![],
+                                            post_balances: vec![],
+                                            pre_token_balances: vec![],
+                                            post_token_balances: vec![],
+                                            signature: sig_str.clone(),
+                                        };
+
                                         // Handle decoded events
                                         for (discriminator, event_data) in decoded {
                                             self.handler_registry
                                                 .handle(
                                                     &discriminator,
                                                     &event_data,
+                                                    &context,
                                                     self.storage.pool(),
-                                                    &sig_str,
                                                 )
                                                 .await?;
                                         }
@@ -859,7 +1056,9 @@ impl SolanaIndexer {
             *last_signature = Some(first_event.signature());
         }
 
-        let mut processed_count = 0;
+        let concurrency = self.config.worker_threads;
+        let semaphore = Arc::new(Semaphore::new(concurrency));
+        let mut tasks = Vec::new();
 
         for event in signatures {
             let signature = event.signature();
@@ -870,15 +1069,53 @@ impl SolanaIndexer {
                 continue;
             }
 
-            // Process transaction
-            match self.process_transaction(&signature).await {
-                Ok(()) => {
-                    processed_count += 1;
-                }
+            // Acquire permit
+            let permit =
+                semaphore.clone().acquire_owned().await.map_err(|e| {
+                    SolanaIndexerError::InternalError(format!("Semaphore error: {e}"))
+                })?;
+
+            let fetcher = self.fetcher.clone();
+            let decoder = self.decoder.clone();
+            let decoder_registry = self.decoder_registry.clone();
+            let log_decoder_registry = self.log_decoder_registry.clone();
+            let account_decoder_registry = self.account_decoder_registry.clone();
+            let handler_registry = self.handler_registry.clone();
+            let storage = self.storage.clone();
+            let config = self.config.clone();
+
+            tasks.push(tokio::spawn(async move {
+                let res = Self::process_transaction_core(
+                    signature,
+                    fetcher,
+                    decoder,
+                    decoder_registry,
+                    log_decoder_registry,
+                    account_decoder_registry,
+                    handler_registry,
+                    storage,
+                    config,
+                    false, // is_finalized
+                    None,
+                )
+                .await;
+                drop(permit);
+                (sig_str, res)
+            }));
+        }
+
+        let mut processed_count = 0;
+        for task in tasks {
+            match task.await {
+                Ok((sig_str, res)) => match res {
+                    Ok(()) => processed_count += 1,
+                    Err(e) => {
+                        logging::log_error("Transaction error", &format!("{sig_str}: {e}"));
+                        eprintln!("Error processing transaction {sig_str}: {e}");
+                    }
+                },
                 Err(e) => {
-                    logging::log_error("Transaction error", &format!("{sig_str}: {e}"));
-                    eprintln!("Error processing transaction {sig_str}: {e}");
-                    // Continue with next transaction
+                    logging::log_error("Task join error", &e.to_string());
                 }
             }
         }
@@ -1002,40 +1239,71 @@ impl SolanaIndexer {
         let decoded_meta = decoder.decode_transaction(&transaction)?;
         let slot = decoded_meta.slot;
 
+        // Extract native metadata
+        let meta = transaction.transaction.meta.as_ref().ok_or_else(|| {
+            SolanaIndexerError::DecodingError("Missing transaction metadata".into())
+        })?;
+
+        let pre_token_balances_opt: Option<
+            Vec<solana_transaction_status::UiTransactionTokenBalance>,
+        > = meta.pre_token_balances.clone().into();
+        let pre_token_balances = pre_token_balances_opt.unwrap_or_default();
+        let post_token_balances_opt: Option<
+            Vec<solana_transaction_status::UiTransactionTokenBalance>,
+        > = meta.post_token_balances.clone().into();
+        let post_token_balances = post_token_balances_opt.unwrap_or_default();
+
+        // Construct context
+        let context = TxMetadata {
+            slot,
+            block_time: transaction.block_time,
+            fee: meta.fee,
+            pre_balances: meta.pre_balances.clone(),
+            post_balances: meta.post_balances.clone(),
+            pre_token_balances: pre_token_balances
+                .into_iter()
+                .map(|b| TokenBalanceInfo {
+                    account_index: b.account_index,
+                    mint: b.mint,
+                    owner: Into::<Option<String>>::into(b.owner).unwrap_or_default(),
+                    amount: b.ui_token_amount.amount,
+                    decimals: b.ui_token_amount.decimals,
+                    program_id: b.program_id.into(),
+                })
+                .collect(),
+            post_token_balances: post_token_balances
+                .into_iter()
+                .map(|b| TokenBalanceInfo {
+                    account_index: b.account_index,
+                    mint: b.mint,
+                    owner: Into::<Option<String>>::into(b.owner).unwrap_or_default(),
+                    amount: b.ui_token_amount.amount,
+                    decimals: b.ui_token_amount.decimals,
+                    program_id: b.program_id.into(),
+                })
+                .collect(),
+            signature: sig_str.clone(),
+        };
+
         let block_hash = if let Some(h) = known_block_hash {
             h
         } else {
-            // We need to fetch block hash if we want to support reorgs properly.
-            // Usually polling gives signatures, then we fetch tx.
-            // If we really want robustness, we need the block hash.
-            // Optimistically, we could just fetch the block header?
-            // Or maybe we make block_hash nullable in DB for now? NO, schema says NOT NULL.
-            // Let's default to "UNKNOWN" for real-time if we can't get it easily,
-            // but that defeats reorg purpose.
-            // Correct way: Fetch block for that slot.
-            // Optimisation: cache block hashes for slots.
-
-            // For now, let's fetch the block (expensive but correct).
-            // Since `fetcher` is available...
             match fetcher.fetch_block(slot).await {
                 Ok(block) => block.blockhash,
-                Err(_) => "UNKNOWN".to_string(), // Fallback
+                Err(_) => "UNKNOWN".to_string(),
             }
         };
 
         // Extract UI instructions from the transaction
-        let instructions = match &transaction.transaction.transaction {
-            solana_transaction_status::EncodedTransaction::Json(ui_tx) => {
-                match &ui_tx.message {
-                    solana_transaction_status::UiMessage::Parsed(msg) => &msg.instructions,
-                    solana_transaction_status::UiMessage::Raw(_) => {
-                        return Ok(()); // Skip non-parsed transactions
-                    }
-                }
-            }
-            _ => {
-                return Ok(()); // Skip non-JSON transactions
-            }
+        let instructions: &[solana_transaction_status::UiInstruction] = match &transaction
+            .transaction
+            .transaction
+        {
+            solana_transaction_status::EncodedTransaction::Json(ui_tx) => match &ui_tx.message {
+                solana_transaction_status::UiMessage::Parsed(msg) => &msg.instructions,
+                _ => &[],
+            },
+            _ => &[],
         };
 
         let mut events_processed = 0;
@@ -1051,7 +1319,7 @@ impl SolanaIndexer {
                 loop {
                     attempts += 1;
                     match handler_registry
-                        .handle(&discriminator, &event_data, storage.pool(), &sig_str)
+                        .handle(&discriminator, &event_data, &context, storage.pool())
                         .await
                     {
                         Ok(()) => break,
@@ -1085,7 +1353,7 @@ impl SolanaIndexer {
                 loop {
                     attempts += 1;
                     match handler_registry
-                        .handle(&discriminator, &event_data, storage.pool(), &sig_str)
+                        .handle(&discriminator, &event_data, &context, storage.pool())
                         .await
                     {
                         Ok(()) => break,
@@ -1154,8 +1422,8 @@ impl SolanaIndexer {
                                         .handle(
                                             &discriminator,
                                             &event_data,
+                                            &context,
                                             storage.pool(),
-                                            &sig_str,
                                         )
                                         .await
                                     {

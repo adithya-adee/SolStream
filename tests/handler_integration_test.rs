@@ -36,7 +36,13 @@ struct TestTransferHandler;
 
 #[async_trait]
 impl EventHandler<TransferEvent> for TestTransferHandler {
-    async fn handle(&self, event: TransferEvent, db: &PgPool, signature: &str) -> Result<()> {
+    async fn handle(
+        &self,
+        event: TransferEvent,
+        context: &solana_indexer::TxMetadata,
+        db: &PgPool,
+    ) -> Result<()> {
+        let signature = &context.signature;
         println!(
             "TestTransferHandler::handle called for signature: {}",
             signature

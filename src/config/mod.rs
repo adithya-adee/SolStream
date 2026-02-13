@@ -65,6 +65,9 @@ pub struct SolanaIndexerConfig {
 
     /// Threshold in slots for cleaning up stale tentative transactions (default: 1000)
     pub stale_tentative_threshold: u64,
+
+    /// Number of worker threads for parallel transaction processing (default: 10)
+    pub worker_threads: usize,
 }
 
 impl SolanaIndexerConfig {
@@ -72,7 +75,9 @@ impl SolanaIndexerConfig {
     #[must_use]
     pub fn rpc_url(&self) -> &str {
         match &self.source {
-            SourceConfig::Rpc { rpc_url, .. } | SourceConfig::WebSocket { rpc_url, .. } => rpc_url,
+            SourceConfig::Rpc { rpc_url, .. }
+            | SourceConfig::WebSocket { rpc_url, .. }
+            | SourceConfig::Hybrid { rpc_url, .. } => rpc_url,
             SourceConfig::Helius {
                 api_key, network, ..
             } => {
@@ -128,6 +133,14 @@ pub enum SourceConfig {
         network: HeliusNetwork,
         use_websocket: bool,
         reconnect_delay_secs: u64,
+    },
+    /// Hybrid source with WebSocket for real-time and RPC for gap filling
+    Hybrid {
+        ws_url: String,
+        rpc_url: String,
+        poll_interval_secs: u64,
+        reconnect_delay_secs: u64,
+        gap_threshold_slots: u64,
     },
 }
 
@@ -288,6 +301,7 @@ pub struct SolanaIndexerConfigBuilder {
     backfill: Option<BackfillConfig>,
     registry: Option<RegistryConfig>,
     stale_tentative_threshold: Option<u64>,
+    worker_threads: Option<usize>,
 }
 
 impl SolanaIndexerConfigBuilder {
@@ -567,11 +581,46 @@ impl SolanaIndexerConfigBuilder {
         self
     }
 
+    /// Sets the number of worker threads for parallel transaction processing.
+    ///
+    /// # Arguments
+    ///
+    /// * `threads` - Number of concurrent tasks (default: 10)
+    #[must_use]
+    pub fn with_worker_threads(mut self, threads: usize) -> Self {
+        self.worker_threads = Some(threads);
+        self
+    }
+
     /// Builds and validates the configuration.
     ///
     /// # Errors
     ///
     /// Returns `SolanaIndexerError::ConfigError` if:
+    /// Set the source to a Hybrid configuration (WebSocket + RPC polling).
+    pub fn with_hybrid(
+        mut self,
+        ws_url: impl Into<String>,
+        rpc_url: impl Into<String>,
+        poll_interval_secs: u64,
+        reconnect_delay_secs: u64,
+        gap_threshold_slots: u64,
+    ) -> Self {
+        self.source = Some(SourceConfig::Hybrid {
+            ws_url: ws_url.into(),
+            rpc_url: rpc_url.into(),
+            poll_interval_secs,
+            reconnect_delay_secs,
+            gap_threshold_slots,
+        });
+        self
+    }
+
+    /// Build the configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
     /// - Any required field (RPC URL, database URL, or program ID) is missing
     /// - The program ID cannot be parsed into a valid `Pubkey`
     ///
@@ -620,6 +669,7 @@ impl SolanaIndexerConfigBuilder {
             backfill: self.backfill.unwrap_or_default(),
             registry: self.registry.unwrap_or_default(),
             stale_tentative_threshold: self.stale_tentative_threshold.unwrap_or(1000),
+            worker_threads: self.worker_threads.unwrap_or(10),
         })
     }
 }

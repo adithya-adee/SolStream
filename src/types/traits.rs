@@ -5,6 +5,7 @@
 //! business logic for processing decoded events and transactions.
 
 use crate::types::events::{EventDiscriminator, ParsedEvent};
+use crate::types::metadata::TxMetadata;
 use crate::utils::error::{Result, SolanaIndexerError};
 use async_trait::async_trait;
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -226,8 +227,8 @@ pub trait EventHandler<T>: Send + Sync + 'static {
     /// # Arguments
     ///
     /// * `event` - The decoded event object
+    /// * `context` - The transaction context (slot, block time, fee, etc.)
     /// * `db` - Database connection pool for persistence operations
-    /// * `signature` - Transaction signature for logging and tracking
     ///
     /// # Errors
     ///
@@ -244,6 +245,7 @@ pub trait EventHandler<T>: Send + Sync + 'static {
     ///
     /// ```
     /// # use solana_indexer::{EventHandler, SolanaIndexerError};
+    /// # use solana_indexer::types::metadata::TxMetadata;
     /// # use async_trait::async_trait;
     /// # use sqlx::PgPool;
     /// #
@@ -257,16 +259,16 @@ pub trait EventHandler<T>: Send + Sync + 'static {
     ///     async fn handle(
     ///         &self,
     ///         event: MyEvent,
+    ///         context: &TxMetadata,
     ///         db: &PgPool,
-    ///         signature: &str,
     ///     ) -> Result<(), SolanaIndexerError> {
     ///         // Custom processing logic
-    ///         println!("Event value: {}", event.value);
+    ///         println!("Event value: {}, Slot: {}", event.value, context.slot);
     ///         Ok(())
     ///     }
     /// }
     /// ```
-    async fn handle(&self, event: T, db: &PgPool, signature: &str) -> Result<()>;
+    async fn handle(&self, event: T, context: &TxMetadata, db: &PgPool) -> Result<()>;
 
     /// Initializes custom database schema for this handler.
     ///
@@ -291,13 +293,18 @@ pub trait DynamicEventHandler: Send + Sync {
     /// # Arguments
     ///
     /// * `event_data` - Raw event data as bytes
+    /// * `context` - The transaction context
     /// * `db` - Database connection pool
-    /// * `signature` - Transaction signature
     ///
     /// # Errors
     ///
     /// Returns `SolanaIndexerError` if handling fails.
-    async fn handle_dynamic(&self, event_data: &[u8], db: &PgPool, signature: &str) -> Result<()>;
+    async fn handle_dynamic(
+        &self,
+        event_data: &[u8],
+        context: &TxMetadata,
+        db: &PgPool,
+    ) -> Result<()>;
 
     /// Returns the event discriminator this handler processes.
     fn discriminator(&self) -> [u8; 8];
@@ -309,10 +316,15 @@ impl<T> DynamicEventHandler for Box<dyn EventHandler<T>>
 where
     T: EventDiscriminator + BorshDeserialize + Send + Sync + 'static,
 {
-    async fn handle_dynamic(&self, event_data: &[u8], db: &PgPool, signature: &str) -> Result<()> {
+    async fn handle_dynamic(
+        &self,
+        event_data: &[u8],
+        context: &TxMetadata,
+        db: &PgPool,
+    ) -> Result<()> {
         let event = T::try_from_slice(event_data)
             .map_err(|e| SolanaIndexerError::DecodingError(e.to_string()))?;
-        self.handle(event, db, signature).await
+        self.handle(event, context, db).await
     }
 
     fn discriminator(&self) -> [u8; 8] {
@@ -407,8 +419,8 @@ impl HandlerRegistry {
     ///
     /// * `discriminator` - The event discriminator
     /// * `event_data` - Raw event data
+    /// * `context` - The transaction context
     /// * `db` - Database connection pool
-    /// * `signature` - Transaction signature
     ///
     /// # Errors
     ///
@@ -419,13 +431,14 @@ impl HandlerRegistry {
     ///
     /// ```no_run
     /// # use solana_indexer::HandlerRegistry;
+    /// # use solana_indexer::types::metadata::TxMetadata;
     /// # use sqlx::PgPool;
-    /// # async fn example(db: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(db: &PgPool, context: &TxMetadata) -> Result<(), Box<dyn std::error::Error>> {
     /// let registry = HandlerRegistry::new();
     /// let discriminator = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
     /// let event_data = b"event data";
     ///
-    /// // registry.handle(&discriminator, event_data, db, "signature").await?;
+    /// // registry.handle(&discriminator, event_data, context, db).await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -433,8 +446,8 @@ impl HandlerRegistry {
         &self,
         discriminator: &[u8; 8],
         event_data: &[u8],
+        context: &TxMetadata,
         db: &PgPool,
-        signature: &str,
     ) -> Result<()> {
         self.metrics.inc_calls();
         let handler = self.handlers.get(discriminator).ok_or_else(|| {
@@ -443,7 +456,7 @@ impl HandlerRegistry {
             ))
         })?;
 
-        let result = handler.handle_dynamic(event_data, db, signature).await;
+        let result = handler.handle_dynamic(event_data, context, db).await;
         if result.is_ok() {
             self.metrics.inc_hits();
         }
@@ -507,9 +520,14 @@ mod tests {
 
     #[async_trait]
     impl EventHandler<TestEvent> for TestHandler {
-        async fn handle(&self, event: TestEvent, _db: &PgPool, signature: &str) -> Result<()> {
+        async fn handle(
+            &self,
+            event: TestEvent,
+            context: &crate::types::metadata::TxMetadata,
+            _db: &PgPool,
+        ) -> Result<()> {
             assert!(event.value > 0);
-            assert!(!signature.is_empty());
+            assert!(!context.signature.is_empty());
             Ok(())
         }
     }
@@ -536,8 +554,8 @@ mod tests {
         async fn handle_dynamic(
             &self,
             _event_data: &[u8],
+            _context: &crate::types::metadata::TxMetadata,
             _db: &PgPool,
-            _signature: &str,
         ) -> Result<()> {
             Ok(())
         }
@@ -571,7 +589,19 @@ mod tests {
 
         // If we can't connect, that's fine for this test - we're testing the registry logic
         if let Ok(db) = pool {
-            let result = registry.handle(&discriminator, b"data", &db, "sig").await;
+            let context = crate::types::metadata::TxMetadata {
+                slot: 0,
+                block_time: None,
+                fee: 0,
+                pre_balances: vec![],
+                post_balances: vec![],
+                pre_token_balances: vec![],
+                post_token_balances: vec![],
+                signature: "sig".to_string(),
+            };
+            let result = registry
+                .handle(&discriminator, b"data", &context, &db)
+                .await;
             assert!(result.is_err());
         }
     }

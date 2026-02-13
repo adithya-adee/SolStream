@@ -15,7 +15,7 @@ flowchart TD
     subgraph Core [2. Core Orchestration]
         SI[SolanaIndexer]
         BE[BackfillEngine]
-        F[Transaction Fetcher]
+        F[Parallel Fetcher<br/>(Worker Pool)]
         D[Decoder]
         S[StorageBackend]
         

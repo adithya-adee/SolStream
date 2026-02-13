@@ -52,6 +52,7 @@ impl StorageBackend for MockStorage {
     }
 
     async fn mark_processed(&self, signature: &str, _slot: u64) -> Result<()> {
+        println!("MockStorage: mark_processed called for {}", signature);
         let mut sigs = self.processed_signatures.lock().unwrap();
         sigs.push(signature.to_string());
         Ok(())
@@ -269,6 +270,24 @@ async fn test_indexer_process_transaction_flow() {
         .mount(&mock_server)
         .await;
 
+    // Mock getBlock
+    Mock::given(method("POST"))
+        .and(body_string_contains("getBlock"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "jsonrpc": "2.0",
+            "result": {
+                "blockhash": "11111111111111111111111111111111",
+                "previousBlockhash": "prevhash",
+                "parentSlot": 123455,
+                "blockTime": 1678888888,
+                "transactions": [],
+                "rewards": []
+            },
+            "id": 1
+        })))
+        .mount(&mock_server)
+        .await;
+
     let config = SolanaIndexerConfigBuilder::new()
         .with_rpc(mock_server.uri())
         .with_database("postgresql://mock/db")
@@ -282,6 +301,9 @@ async fn test_indexer_process_transaction_flow() {
 
     // Run for a short time to allow processing
     let _ = tokio::time::timeout(std::time::Duration::from_secs(3), indexer.start()).await;
+
+    // Small sleep to ensure detached tasks complete
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // Verify transaction was marked as processed
     let is_processed = storage.is_processed(sig_str).await.unwrap();
@@ -305,6 +327,7 @@ async fn test_indexer_backfill() {
             "result": {
                 "blockhash": "headerhash",
                 "previousBlockhash": "prevhash",
+                "parentSlot": 99,
                 "blockTime": 1678888888,
                 "transactions": [
                     {

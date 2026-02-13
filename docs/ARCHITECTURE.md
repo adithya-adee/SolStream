@@ -28,6 +28,7 @@ The core pipeline consists of the following stages:
 5.  **Handler Registry (Developer Extension Point #2):** Dispatches decoded events to registered `EventHandler<T>` implementations.
     *   Developers implement `EventHandler<T>` to define custom business logic for processing events.
     *   Typical operations include database inserts, updates, external API calls, or triggering further processing.
+    *   Handlers receive enriched context via `TxMetadata` (slot, block time, fee, balances), enabling complex logic without extra RPC calls.
     *   Handlers can define custom database schemas via the `initialize_schema()` method.
 6.  **Confirmation & Persistence:** Marks the transaction signature as processed in the idempotency tracker.
 
@@ -38,7 +39,7 @@ See `docs/architecture_diagram.mermaid` for a visual representation of the archi
 The core pipeline consists of:
 
 1.  **Input Source (Poller / Subscriber):** Acquires transaction signatures.
-2.  **Transaction Fetcher:** Retrieves full transaction details.
+2.  **Parallel Transaction Fetcher:** Retrieves full transaction details concurrently using a worker pool.
 3.  **Backfill Engine:** Manages historical data indexing with reorg handling.
 4.  **Idempotency Tracker:** Prevents duplicate processing.
 5.  **Bounded Registries:** Routes data to decoders and handlers with memory safeguards.
@@ -112,7 +113,16 @@ A cornerstone of SolanaIndexer's DX is its ability to transform Solana program I
 
 For scenarios where a specific program IDL isn't available or desired (e.g., indexing generic SPL Token transfers), SolanaIndexer's `Decoder` can also interpret common instruction types by directly parsing their known byte layouts. This provides flexibility but requires the SDK to maintain knowledge of these specific instruction formats.
 
-## 5. Extensibility: Developer Extension Points
+## 5. Performance & Reliability
+
+### Parallel Fetch Pipeline
+
+To handle high throughput, the indexer employs a parallel fetch pipeline:
+*   **Worker Pool:** A configurable number of worker threads (`worker_threads`) process transactions concurrently.
+*   **Semaphore Bounding:** Concurrency is limited by a semaphore to prevent overwhelming the RPC provider or local resources.
+*   **Non-Blocking:** The processing loop spawns tasks (`tokio::spawn`) effectively utilizing multicore systems.
+
+## 6. Extensibility: Developer Extension Points
 
 SolanaIndexer provides two primary extension points that enable developers to inject custom logic cleanly and efficiently:
 
@@ -321,7 +331,7 @@ This separation allows developers to:
 - **Mix and match** different decoders and handlers
 - **Support multiple programs** in a single indexer instance
 
-## 6. Reliability & Error Handling
+## 7. Reliability & Error Handling
 
 Reliability is paramount for an indexing solution. SolanaIndexer implements robust mechanisms to ensure data integrity and system stability.
 
@@ -358,7 +368,7 @@ Reliability is paramount for an indexing solution. SolanaIndexer implements robu
 *   **Dead-Letter Queues (Production Roadmap):** For events that consistently fail processing after all retries (e.g., due to malformed data or unrecoverable application errors), a dead-letter queue mechanism will be introduced. This prevents such problematic events from blocking the main processing pipeline and allows for manual inspection and reprocessing.
 *   **Database Transactions:** For handlers performing multiple database operations, developers are strongly encouraged to wrap their logic in database transactions to ensure atomicity (all or nothing) and data consistency.
 
-## 7. Security Considerations
+## 8. Security Considerations
 
 Security is built into SolanaIndexer's design, protecting both the indexed data and the developer's application.
 
@@ -368,7 +378,7 @@ Security is built into SolanaIndexer's design, protecting both the indexed data 
 *   **Minimal Privileges:** Encourage running the indexer with the minimum necessary permissions for both network and database access.
 *   **Open Source Auditability:** As an open-source SDK, the codebase is transparent and auditable by the community, fostering trust and allowing for early detection of potential vulnerabilities.
 
-## 8. Directory Structure
+## 9. Directory Structure
 
 solana-indexer/
 ├── Cargo.toml
@@ -411,7 +421,7 @@ solana-indexer/
 5.  **Implement Handler:** Implements `EventHandler<TransferEvent>` trait
 6.  **Configure & Run:** Configures SolanaIndexer using the builder pattern and runs the indexer with `cargo run`
 
-## 9. Developer Quickstart
+## 10. Developer Quickstart
 
 ### Step 1: Setup Configuration
 
@@ -464,7 +474,7 @@ impl InstructionDecoder<TransferEvent> for MyDecoder {
 ### Step 4: Implement Your EventHandler
 
 ```rust
-use solana_indexer::{EventHandler, SolanaIndexerError};
+use solana_indexer::{EventHandler, SolanaIndexerError, TxMetadata};
 use solana_indexer::generated::TransferEvent; // Assuming your IDL defines a TransferEvent
 use sqlx::PgPool;
 use async_trait::async_trait;
@@ -478,25 +488,25 @@ impl EventHandler<TransferEvent> for MyTransferHandler {
     ///
     /// # Arguments
     ///
-    /// * `event` - The deserialized `TransferEvent` object from the blockchain.
+    /// * `event` - The typed event to process
+    /// * `context` - transaction metadata (slot, block time, fee, balances)
     /// * `db` - A database connection pool for performing persistence operations.
-    /// * `signature` - The unique transaction signature associated with this event.
     ///
     /// # Returns
     ///
     /// A `Result` indicating success (`Ok(())`) or a `SolanaIndexerError` if
     /// a database operation fails.
-    async fn handle(&self, event: TransferEvent, db: &PgPool, signature: &str)
+    async fn handle(&self, event: TransferEvent, context: &TxMetadata, db: &PgPool)
         -> Result<(), SolanaIndexerError> {
         println!("Processing Transfer: Sig={}, From={}, To={}, Amount={}",
-                 signature, event.from, event.to, event.amount);
+                 context.signature, event.from, event.to, event.amount);
 
         // Example: Persist event data to a 'transfers' table in the database.
         // `sqlx::query!` is used for type-safe and injection-resistant queries.
         sqlx::query!(
             "INSERT INTO transfers (signature, from_wallet, to_wallet, amount)
              VALUES ($1, $2, $3, $4)",
-            signature, event.from.to_string(), event.to.to_string(), event.amount as i64
+            context.signature, event.from.to_string(), event.to.to_string(), event.amount as i64
         )
         .execute(db)
         .await
@@ -510,7 +520,7 @@ impl EventHandler<TransferEvent> for MyTransferHandler {
 ### Step 5: Initialize and Run SolanaIndexer
 
 ```rust
-use solana_indexer::{EventHandler, SolanaIndexer, SolanaIndexerError};
+use solana_indexer::{EventHandler, SolanaIndexer, SolanaIndexerError, TxMetadata};
 // Assuming `TransferEvent` is generated by the SolanaIndexer procedural macro
 use solana_indexer::generated::TransferEvent; 
 use async_trait::async_trait;
@@ -524,15 +534,15 @@ pub struct MyTransferHandler;
 
 #[async_trait]
 impl EventHandler<TransferEvent> for MyTransferHandler {
-    async fn handle(&self, event: TransferEvent, db: &PgPool, signature: &str)
+    async fn handle(&self, event: TransferEvent, context: &TxMetadata, db: &PgPool)
         -> Result<(), SolanaIndexerError> {
         println!("Processing Transfer: Sig={}, From={}, To={}, Amount={}",
-                 signature, event.from, event.to, event.amount);
+                 context.signature, event.from, event.to, event.amount);
 
         sqlx::query!(
             "INSERT INTO transfers (signature, from_wallet, to_wallet, amount)
              VALUES ($1, $2, $3, $4)",
-            signature, event.from.to_string(), event.to.to_string(), event.amount as i64
+            context.signature, event.from.to_string(), event.to.to_string(), event.amount as i64
         )
         .execute(db)
         .await
@@ -587,7 +597,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 ```
 **That's it! Your indexer is now configured to process `TransferEvent`s for your specified program.**
 
-## 10. Production Roadmap & Future Enhancements
+## 11. Production Roadmap & Future Enhancements
 
 SolanaIndexer is on a continuous path of improvement, with a clear roadmap to enhance its capabilities for production environments.
 

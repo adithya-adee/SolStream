@@ -35,17 +35,6 @@ tokio-util = { version = "0.7.18", features = ["full"] }
 name = "solana-indexer"
 path = "src/main.rs"
 
-[[bin]]
-name = "decoder_bench"
-path = "benches/decoder_bench.rs"
-
-[[bin]]
-name = "storage_bench"
-path = "benches/storage_bench.rs"
-
-[[bin]]
-name = "throughput_bench"
-path = "benches/throughput_bench.rs"
 
 [dev-dependencies]
 honggfuzz = "0.5"

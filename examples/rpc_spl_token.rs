@@ -194,9 +194,10 @@ impl EventHandler<SplTransferEvent> for SplTransferHandler {
     async fn handle(
         &self,
         event: SplTransferEvent,
+        context: &solana_indexer::TxMetadata,
         db: &PgPool,
-        signature: &str,
     ) -> Result<(), SolanaIndexerError> {
+        let signature = &context.signature;
         // Log the transfer for monitoring
         println!(
             "📝 SPL Transfer: {} → {} ({} tokens) [{}]",

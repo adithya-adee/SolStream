@@ -126,9 +126,10 @@ impl EventHandler<JupiterSwapEvent> for JupiterSwapHandler {
     async fn handle(
         &self,
         event: JupiterSwapEvent,
+        context: &solana_indexer::TxMetadata,
         db: &PgPool,
-        signature: &str,
     ) -> Result<(), SolanaIndexerError> {
+        let signature = &context.signature;
         println!("🔥 Jupiter Swap Indexed! Signature: {}", signature);
 
         sqlx::query(
