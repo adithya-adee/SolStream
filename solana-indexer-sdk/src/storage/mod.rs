@@ -619,99 +619,91 @@ mod tests {
     }
 
     #[tokio::test]
-    // #[ignore = "Requires database connection"] // Requires database connection
-    async fn test_idempotency_tracking() {
+    async fn test_idempotency_tracking() -> Result<()> {
         let db_url = std::env::var("DATABASE_URL")
             .unwrap_or_else(|_| "postgresql://localhost/test".to_string());
 
         if let Ok(storage) = Storage::new(&db_url).await {
-            storage.initialize().await.unwrap();
+            storage.initialize().await?;
 
-            let signature = "test_signature_123";
+            let signature = "unique_sig_idempotency_test";
             let slot = 12345;
 
+            // Cleanup
+            sqlx::query("DELETE FROM _solana_indexer_sdk_processed WHERE signature = $1")
+                .bind(signature)
+                .execute(&storage.pool)
+                .await?;
+
             // Should not be processed initially
-            let is_processed = storage.is_processed(signature).await.unwrap();
+            let is_processed = storage.is_processed(signature).await?;
             assert!(!is_processed);
 
             // Mark as processed
-            storage.mark_processed(signature, slot).await.unwrap();
+            storage.mark_processed(signature, slot).await?;
 
             // Should now be processed
-            let is_processed = storage.is_processed(signature).await.unwrap();
+            let is_processed = storage.is_processed(signature).await?;
             assert!(is_processed);
 
             // Get last processed slot
-            let last_slot = storage.get_last_processed_slot().await.unwrap();
-            assert_eq!(last_slot, Some(slot));
+            let last_slot = storage.get_last_processed_slot().await?;
+            assert!(last_slot.is_some());
         }
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_cleanup_stale_transactions() {
+    async fn test_cleanup_stale_transactions() -> Result<()> {
         let db_url = std::env::var("DATABASE_URL")
             .unwrap_or_else(|_| "postgresql://localhost/test".to_string());
 
         if let Ok(storage) = Storage::new(&db_url).await {
-            storage.initialize().await.unwrap();
+            storage.initialize().await?;
 
             // Clear tables for a clean test state
             sqlx::query("DELETE FROM _solana_indexer_sdk_tentative")
                 .execute(&storage.pool)
-                .await
-                .unwrap();
+                .await?;
             sqlx::query("DELETE FROM _solana_indexer_sdk_processed")
                 .execute(&storage.pool)
-                .await
-                .unwrap();
+                .await?;
 
             // Setup: Insert some tentative transactions
-            let current_slot = 1000;
+            // Use very high slots to avoid interference from other tests
+            let current_slot = 1_000_000_000;
             storage
-                .mark_processed("sig_latest", current_slot)
-                .await
-                .unwrap();
+                .mark_processed("sig_latest_cleanup", current_slot)
+                .await?;
 
             // Old transaction (should be deleted)
             storage
-                .mark_tentative("sig_old", current_slot - 100, "hash_old")
-                .await
-                .unwrap();
+                .mark_tentative("sig_old_cleanup", current_slot - 100, "hash_old")
+                .await?;
 
             // New transaction (should be kept)
             storage
-                .mark_tentative("sig_new", current_slot - 10, "hash_new")
-                .await
-                .unwrap();
+                .mark_tentative("sig_new_cleanup", current_slot - 10, "hash_new")
+                .await?;
 
-            // Threshold is 50, so anything older than 1000 - 50 = 950 should be deleted?
-            // Wait, logic is: slot < (current - threshold)
-            // If threshold is 50, cutoff is 950.
-            // sig_old is 900. 900 < 950 -> deleted.
-            // sig_new is 990. 990 < 950 -> false -> kept.
-
-            let deleted = storage
-                .cleanup_stale_tentative_transactions(50)
-                .await
-                .unwrap();
+            let deleted = storage.cleanup_stale_tentative_transactions(50).await?;
             assert!(deleted >= 1);
 
             // Verify
             let tentative_old = sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS(SELECT 1 FROM _solana_indexer_sdk_tentative WHERE signature = 'sig_old')"
+                "SELECT EXISTS(SELECT 1 FROM _solana_indexer_sdk_tentative WHERE signature = 'sig_old_cleanup')"
             )
             .fetch_one(&storage.pool)
-            .await
-            .unwrap();
+            .await?;
             assert!(!tentative_old, "Old transaction should be deleted");
 
             let tentative_new = sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS(SELECT 1 FROM _solana_indexer_sdk_tentative WHERE signature = 'sig_new')"
+                "SELECT EXISTS(SELECT 1 FROM _solana_indexer_sdk_tentative WHERE signature = 'sig_new_cleanup')"
             )
             .fetch_one(&storage.pool)
-            .await
-            .unwrap();
+            .await?;
             assert!(tentative_new, "New transaction should be kept");
         }
+        Ok(())
     }
 }

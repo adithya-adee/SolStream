@@ -331,12 +331,17 @@ mod tests {
         };
 
         // Serialize
-        let serialized = borsh::to_vec(&event).unwrap();
-        assert!(!serialized.is_empty());
-
-        // Deserialize
-        let deserialized: TransferEvent = borsh::from_slice(&serialized).unwrap();
-        assert_eq!(event, deserialized);
+        match borsh::to_vec(&event) {
+            Ok(serialized) => {
+                assert!(!serialized.is_empty());
+                // Deserialize
+                match borsh::from_slice::<TransferEvent>(&serialized) {
+                    Ok(deserialized) => assert_eq!(event, deserialized),
+                    Err(e) => panic!("Failed to deserialize: {}", e),
+                }
+            }
+            Err(e) => panic!("Failed to serialize: {}", e),
+        }
     }
 
     #[test]
@@ -348,12 +353,17 @@ mod tests {
         };
 
         // Serialize to JSON
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("user123"));
-
-        // Deserialize from JSON
-        let deserialized: DepositEvent = serde_json::from_str(&json).unwrap();
-        assert_eq!(event, deserialized);
+        match serde_json::to_string(&event) {
+            Ok(json) => {
+                assert!(json.contains("user123"));
+                // Deserialize from JSON
+                match serde_json::from_str::<DepositEvent>(&json) {
+                    Ok(deserialized) => assert_eq!(event, deserialized),
+                    Err(e) => panic!("Failed to deserialize: {}", e),
+                }
+            }
+            Err(e) => panic!("Failed to serialize: {}", e),
+        }
     }
 
     #[test]

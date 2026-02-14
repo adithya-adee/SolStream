@@ -57,7 +57,7 @@ async fn test_indexer_websocket_integration() {
     setup_rpc_mocks(&mock_rpc).await;
 
     let test_signature =
-        "5j7s6NiJS3JAkvgkoc18WVAsiSaci2pxB2A6ueCJP4tprA2TFg9wSyTLeYouxPBJEMzJinENTkpA52YStRW5Dia7";
+        "5j7s6NiJS3JAkvgkoc18WVAsiSaci2pxB2A6ueCJP4tprA2TFg9wSyTLeYouxPBJEMzJinENTkpA52YStRW5Dia8"; // Changed last char from 7 to 8
 
     // Mock getTransaction
     Mock::given(method("POST"))
@@ -139,6 +139,9 @@ async fn test_indexer_websocket_integration() {
                 ))
                 .await
                 .unwrap();
+
+            // Keep the connection open for a while to allow the client to process
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
         }
     });
 
@@ -168,16 +171,28 @@ async fn test_indexer_websocket_integration() {
         .expect("Failed to build config");
 
     let indexer = SolanaIndexer::new_with_storage(config, storage.clone());
+    let token = indexer.cancellation_token();
 
-    // Run for a short time
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(3), indexer.start()).await;
+    // Start indexer in background
+    let indexer_handle = tokio::spawn(async move { indexer.start().await });
+
+    // Wait for the indexer to process the notification
+    // We poll the database instead of a blunt sleep for faster and more reliable tests
+    let mut processed = false;
+    for _ in 0..10 {
+        if storage.is_processed(test_signature).await.unwrap() {
+            processed = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+
+    // Graceful shutdown
+    token.cancel();
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), indexer_handle).await;
 
     // Verify processed
-    let is_processed = storage
-        .is_processed(test_signature)
-        .await
-        .expect("Failed to check if processed");
-    assert!(is_processed, "WS notification should have been processed");
+    assert!(processed, "WS notification should have been processed");
 
     // Clean up
     let _ = sqlx::query("DELETE FROM _solana_indexer_sdk_processed WHERE signature = $1")

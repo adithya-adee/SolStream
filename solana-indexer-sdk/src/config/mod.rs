@@ -783,13 +783,12 @@ mod tests {
     }
 
     #[test]
-    fn test_builder_defaults() {
+    fn test_builder_defaults() -> Result<()> {
         let config = SolanaIndexerConfigBuilder::new()
             .with_rpc("http://127.0.0.1:8899")
             .with_database("postgresql://localhost/db")
             .program_id("11111111111111111111111111111111")
-            .build()
-            .unwrap();
+            .build()?;
 
         assert_eq!(config.poll_interval_secs, 5);
         assert_eq!(config.batch_size, 100);
@@ -806,16 +805,16 @@ mod tests {
             }
             _ => panic!("Expected RPC source"),
         }
+        Ok(())
     }
 
     #[test]
-    fn test_builder_websocket_config() {
+    fn test_builder_websocket_config() -> Result<()> {
         let config = SolanaIndexerConfigBuilder::new()
             .with_ws("ws://127.0.0.1:8900", "http://127.0.0.1:8899")
             .with_database("postgresql://localhost/db")
             .program_id("11111111111111111111111111111111")
-            .build()
-            .unwrap();
+            .build()?;
 
         match config.source {
             SourceConfig::WebSocket {
@@ -826,16 +825,16 @@ mod tests {
             }
             _ => panic!("Expected WebSocket source"),
         }
+        Ok(())
     }
 
     #[test]
-    fn test_builder_helius_config() {
+    fn test_builder_helius_config() -> Result<()> {
         let config = SolanaIndexerConfigBuilder::new()
             .with_helius("test-api-key", true)
             .with_database("postgresql://localhost/db")
             .program_id("11111111111111111111111111111111")
-            .build()
-            .unwrap();
+            .build()?;
 
         assert_eq!(
             config.rpc_url(),
@@ -860,16 +859,16 @@ mod tests {
             }
             _ => panic!("Expected Helius source"),
         }
+        Ok(())
     }
 
     #[test]
-    fn test_builder_helius_devnet_config() {
+    fn test_builder_helius_devnet_config() -> Result<()> {
         let config = SolanaIndexerConfigBuilder::new()
             .with_helius_network("test-api-key", HeliusNetwork::Devnet, true)
             .with_database("postgresql://localhost/db")
             .program_id("11111111111111111111111111111111")
-            .build()
-            .unwrap();
+            .build()?;
 
         assert_eq!(
             config.rpc_url(),
@@ -893,5 +892,6 @@ mod tests {
             }
             _ => panic!("Expected Helius source"),
         }
+        Ok(())
     }
 }

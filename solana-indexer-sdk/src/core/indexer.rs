@@ -162,12 +162,13 @@ impl SolanaIndexer {
 
     /// Returns a mutable reference to the handler registry.
     ///
-    /// Panics if there are multiple references to the registry.
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the handler registry has multiple references (i.e., if it's being shared).
-    pub fn handler_registry_mut(&mut self) -> &mut HandlerRegistry {
-        Arc::get_mut(&mut self.handler_registry).expect("HandlerRegistry has multiple references")
+    /// Returns `SolanaIndexerError::InternalError` if the registry has multiple references.
+    pub fn handler_registry_mut(&mut self) -> Result<&mut HandlerRegistry> {
+        Arc::get_mut(&mut self.handler_registry).ok_or_else(|| {
+            SolanaIndexerError::InternalError("HandlerRegistry has multiple references".to_string())
+        })
     }
 
     /// Returns a reference to the decoder registry.
@@ -178,12 +179,13 @@ impl SolanaIndexer {
 
     /// Returns a mutable reference to the decoder registry.
     ///
-    /// Panics if there are multiple references to the registry.
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the decoder registry has multiple references.
-    pub fn decoder_registry_mut(&mut self) -> &mut DecoderRegistry {
-        Arc::get_mut(&mut self.decoder_registry).expect("DecoderRegistry has multiple references")
+    /// Returns `SolanaIndexerError::InternalError` if the registry has multiple references.
+    pub fn decoder_registry_mut(&mut self) -> Result<&mut DecoderRegistry> {
+        Arc::get_mut(&mut self.decoder_registry).ok_or_else(|| {
+            SolanaIndexerError::InternalError("DecoderRegistry has multiple references".to_string())
+        })
     }
 
     /// Returns a reference to the log decoder registry.
@@ -194,12 +196,15 @@ impl SolanaIndexer {
 
     /// Returns a mutable reference to the log decoder registry.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the log decoder registry has multiple references.
-    pub fn log_decoder_registry_mut(&mut self) -> &mut LogDecoderRegistry {
-        Arc::get_mut(&mut self.log_decoder_registry)
-            .expect("LogDecoderRegistry has multiple references")
+    /// Returns `SolanaIndexerError::InternalError` if the registry has multiple references.
+    pub fn log_decoder_registry_mut(&mut self) -> Result<&mut LogDecoderRegistry> {
+        Arc::get_mut(&mut self.log_decoder_registry).ok_or_else(|| {
+            SolanaIndexerError::InternalError(
+                "LogDecoderRegistry has multiple references".to_string(),
+            )
+        })
     }
 
     /// Returns a reference to the account decoder registry.
@@ -210,12 +215,15 @@ impl SolanaIndexer {
 
     /// Returns a mutable reference to the account decoder registry.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the account decoder registry has multiple references.
-    pub fn account_decoder_registry_mut(&mut self) -> &mut AccountDecoderRegistry {
-        Arc::get_mut(&mut self.account_decoder_registry)
-            .expect("AccountDecoderRegistry has multiple references")
+    /// Returns `SolanaIndexerError::InternalError` if the registry has multiple references.
+    pub fn account_decoder_registry_mut(&mut self) -> Result<&mut AccountDecoderRegistry> {
+        Arc::get_mut(&mut self.account_decoder_registry).ok_or_else(|| {
+            SolanaIndexerError::InternalError(
+                "AccountDecoderRegistry has multiple references".to_string(),
+            )
+        })
     }
 
     /// Registers a schema initializer.
@@ -233,6 +241,10 @@ impl SolanaIndexer {
     /// * `program_id` - The program ID associated with this decoder
     /// * `decoder` - The typed decoder instance
     ///
+    /// # Errors
+    ///
+    /// Returns `SolanaIndexerError::RegistryCapacityExceeded` if the registry is full.
+    ///
     /// # Example
     ///
     /// ```no_run
@@ -242,24 +254,25 @@ impl SolanaIndexer {
     /// # impl solana_indexer_sdk::InstructionDecoder<MyEvent> for MyDecoder { fn decode(&self, _: &solana_transaction_status::UiInstruction) -> Option<MyEvent> { None } }
     /// # impl solana_indexer_sdk::EventDiscriminator for MyEvent { fn discriminator() -> [u8; 8] { [0; 8] } }
     /// # impl borsh::BorshSerialize for MyEvent { fn serialize<W: std::io::Write>(&self, _: &mut W) -> std::io::Result<()> { Ok(()) } }
-    /// # fn example(indexer: &mut SolanaIndexer) {
-    /// indexer.register_decoder("program_id", MyDecoder);
+    /// # fn example(indexer: &mut SolanaIndexer) -> Result<(), Box<dyn std::error::Error>> {
+    /// indexer.register_decoder("program_id", MyDecoder)?;
+    /// # Ok(())
     /// # }
     /// ```
-    pub fn register_decoder<D, E>(&mut self, program_id: impl Into<String>, decoder: D)
+    pub fn register_decoder<D, E>(
+        &mut self,
+        program_id: impl Into<String>,
+        decoder: D,
+    ) -> Result<()>
     where
         D: crate::types::traits::InstructionDecoder<E> + 'static,
         E: crate::types::events::EventDiscriminator + borsh::BorshSerialize + Send + Sync + 'static,
     {
         use crate::types::traits::DynamicInstructionDecoder;
         let boxed_typed: Box<dyn crate::types::traits::InstructionDecoder<E>> = Box::new(decoder);
-        // Box<dyn InstructionDecoder<E>> automatically implements DynamicInstructionDecoder
-        // but we need to box it again to match the registry's expectation of Box<dyn DynamicInstructionDecoder>
-        // Use an explicit cast/coercion to ensure correct vtable dispatch
         let boxed_dynamic: Box<dyn DynamicInstructionDecoder> = Box::new(boxed_typed);
-        self.decoder_registry_mut()
+        self.decoder_registry_mut()?
             .register(program_id.into(), boxed_dynamic)
-            .expect("Failed to register decoder");
     }
 
     /// Registers a typed event handler.
@@ -284,11 +297,12 @@ impl SolanaIndexer {
     /// #   fn deserialize(buf: &mut &[u8]) -> std::io::Result<Self> { Ok(MyEvent) }
     /// #   fn deserialize_reader<R: std::io::Read>(_: &mut R) -> std::io::Result<Self> { Ok(MyEvent) }
     /// # }
-    /// # fn example(indexer: &mut SolanaIndexer) {
-    /// indexer.register_handler(MyHandler);
+    /// # fn example(indexer: &mut SolanaIndexer) -> Result<(), Box<dyn std::error::Error>> {
+    /// indexer.register_handler(MyHandler)?;
+    /// # Ok(())
     /// # }
     /// ```
-    pub fn register_handler<H, E>(&mut self, handler: H)
+    pub fn register_handler<H, E>(&mut self, handler: H) -> Result<()>
     where
         H: crate::types::traits::EventHandler<E> + 'static,
         E: crate::types::events::EventDiscriminator
@@ -301,27 +315,19 @@ impl SolanaIndexer {
         let boxed_typed: Box<dyn crate::types::traits::EventHandler<E>> = Box::new(handler);
         let boxed_dynamic: Box<dyn DynamicEventHandler> = Box::new(boxed_typed);
 
-        // We propagate any error from register (e.g. registry full) by panicking or handling?
-        // The original method returned Result but this convenience method swallows it or panics?
-        // Better to unwrap or changing API to return Result?
-        // The release assessment example usage showed no Result: `indexer.register_decoder(...)`
-        // But `register` returns generic Result via `?`.
-        // Let's make these methods return nothing and panic on error for simplicity (convention in builders/setup),
-        // or log error. Given "Painful API", let's keep it simple.
-        // Actually, `register` on registries might fail if full.
-        // Let's just unwrap/expect for now as this is setup phase.
-        self.handler_registry_mut()
+        self.handler_registry_mut()?
             .register(E::discriminator(), boxed_dynamic)
-            .expect("Failed to register handler");
     }
 
     /// Returns a reference to the decoder for registering event discriminators.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the decoder has multiple references.
-    pub fn decoder_mut(&mut self) -> &mut Decoder {
-        Arc::get_mut(&mut self.decoder).expect("Decoder has multiple references")
+    /// Returns `SolanaIndexerError::InternalError` if the decoder has multiple references.
+    pub fn decoder_mut(&mut self) -> Result<&mut Decoder> {
+        Arc::get_mut(&mut self.decoder).ok_or_else(|| {
+            SolanaIndexerError::InternalError("Decoder has multiple references".to_string())
+        })
     }
 
     /// Returns a reference to the fetcher.
@@ -1515,13 +1521,12 @@ mod tests {
     use crate::config::SolanaIndexerConfigBuilder;
 
     #[tokio::test]
-    async fn test_indexer_creation_rpc() {
+    async fn test_indexer_creation_rpc() -> Result<()> {
         let config = SolanaIndexerConfigBuilder::new()
             .with_rpc("http://127.0.0.1:8899")
             .with_database("postgresql://localhost/db")
             .program_id("11111111111111111111111111111111")
-            .build()
-            .unwrap();
+            .build()?;
 
         // We can't fully instantiate SolanaIndexer without a real DB, so we verify config
         assert_eq!(config.rpc_url(), "http://127.0.0.1:8899");
@@ -1529,21 +1534,22 @@ mod tests {
             SourceConfig::Rpc { .. } => {}
             _ => panic!("Expected RPC source"),
         }
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_indexer_creation_ws() {
+    async fn test_indexer_creation_ws() -> Result<()> {
         let config = SolanaIndexerConfigBuilder::new()
             .with_ws("ws://127.0.0.1:8900", "http://127.0.0.1:8899")
             .with_database("postgresql://localhost/db")
             .program_id("11111111111111111111111111111111")
-            .build()
-            .unwrap();
+            .build()?;
 
         assert_eq!(config.rpc_url(), "http://127.0.0.1:8899");
         match config.source {
             SourceConfig::WebSocket { ws_url, .. } => assert_eq!(ws_url, "ws://127.0.0.1:8900"),
             _ => panic!("Expected WebSocket source"),
         }
+        Ok(())
     }
 }

@@ -63,15 +63,15 @@ impl EventHandler<TransferEvent> for TestTransferHandler {
 }
 
 #[tokio::test]
-
-async fn test_handler_integration_with_database() {
+async fn test_handler_integration_with_database(
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
-    // ... (rest of setup)
+
     let database_url = match std::env::var("DATABASE_URL") {
         Ok(url) => url,
         Err(_) => {
             eprintln!("DATABASE_URL not set, skipping integration test");
-            return;
+            return Ok(());
         }
     };
 
@@ -145,12 +145,8 @@ async fn test_handler_integration_with_database() {
         .mount(&mock_server)
         .await;
 
-    let storage = Arc::new(
-        Storage::new(&database_url)
-            .await
-            .expect("Failed to connect"),
-    );
-    storage.initialize().await.expect("Failed to initialize");
+    let storage = Arc::new(Storage::new(&database_url).await?);
+    storage.initialize().await?;
 
     // Initialize custom table HERE
     sqlx::query(
@@ -165,8 +161,7 @@ async fn test_handler_integration_with_database() {
         ",
     )
     .execute(storage.pool())
-    .await
-    .expect("Failed to create test table");
+    .await?;
 
     // Clean up test data
     let _ = sqlx::query("DELETE FROM test_transfers WHERE signature = $1")
@@ -190,33 +185,26 @@ async fn test_handler_integration_with_database() {
         .program_id("11111111111111111111111111111111")
         .with_poll_interval(1)
         .with_start_signature("1111111111111111111111111111111111111111111111111111111111111111")
-        .build()
-        .expect("Failed to build config");
+        .build()?;
 
     let mut indexer = SolanaIndexer::new_with_storage(config, storage.clone());
+    let token = indexer.cancellation_token();
 
     // Register decoder for System Program (both name and ID)
-    indexer
-        .decoder_registry_mut()
-        .register(
-            "system".to_string(),
-            Box::new(Box::new(TestTransferDecoder) as Box<dyn InstructionDecoder<TransferEvent>>),
-        )
-        .unwrap();
+    indexer.decoder_registry_mut()?.register(
+        "system".to_string(),
+        Box::new(Box::new(TestTransferDecoder) as Box<dyn InstructionDecoder<TransferEvent>>),
+    )?;
 
-    indexer
-        .decoder_registry_mut()
-        .register(
-            "11111111111111111111111111111111".to_string(),
-            Box::new(Box::new(TestTransferDecoder) as Box<dyn InstructionDecoder<TransferEvent>>),
-        )
-        .unwrap();
+    indexer.decoder_registry_mut()?.register(
+        "11111111111111111111111111111111".to_string(),
+        Box::new(Box::new(TestTransferDecoder) as Box<dyn InstructionDecoder<TransferEvent>>),
+    )?;
 
     let handler: Box<dyn EventHandler<TransferEvent>> = Box::new(TestTransferHandler);
     indexer
-        .handler_registry_mut()
-        .register(TransferEvent::discriminator(), Box::new(handler))
-        .unwrap();
+        .handler_registry_mut()?
+        .register(TransferEvent::discriminator(), Box::new(handler))?;
 
     // Setup mocks RIGHT before starting to ensure they are top priority (LIFO)
     // Common mocks (Version, Blockhash)
@@ -262,7 +250,6 @@ async fn test_handler_integration_with_database() {
             ],
             "id": 1
         })))
-        // .expect(1..) // Removed to avoid phantom verification failures
         .mount(&mock_server)
         .await;
 
@@ -313,26 +300,37 @@ async fn test_handler_integration_with_database() {
         .mount(&mock_server)
         .await;
 
-    // Run indexer with increased timeout
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), indexer.start()).await;
+    // Run indexer in background
+    let indexer_handle = tokio::spawn(async move { indexer.start().await });
 
-    // Verify handler wrote to custom table
-    let record = sqlx::query_as::<_, (String, String, String, i64)>(
-        "SELECT signature, from_address, to_address, amount FROM test_transfers WHERE signature = $1",
-    )
-    .bind(test_signature)
-    .fetch_optional(storage.pool())
-    .await
-    .expect("Failed to query");
+    // Wait for handler to write to custom table
+    let mut record_found = false;
+    for _ in 0..10 {
+        let record = sqlx::query_as::<_, (String, String, String, i64)>(
+            "SELECT signature, from_address, to_address, amount FROM test_transfers WHERE signature = $1",
+        )
+        .bind(test_signature)
+        .fetch_optional(storage.pool())
+        .await?;
 
-    assert!(record.is_some(), "Handler should have written to database");
-
-    if let Some((sig, from, to, amount)) = record {
-        assert_eq!(sig, test_signature);
-        assert_eq!(from, "sender123");
-        assert_eq!(to, "receiver456");
-        assert_eq!(amount, 1000);
+        if record.is_some() {
+            if let Some((sig, from, to, amount)) = record {
+                assert_eq!(sig, test_signature);
+                assert_eq!(from, "sender123");
+                assert_eq!(to, "receiver456");
+                assert_eq!(amount, 1000);
+            }
+            record_found = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
+
+    // Graceful shutdown
+    token.cancel();
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), indexer_handle).await;
+
+    assert!(record_found, "Handler should have written to database");
 
     // Clean up
     let _ = sqlx::query("DELETE FROM test_transfers WHERE signature = $1")
@@ -344,4 +342,6 @@ async fn test_handler_integration_with_database() {
         .bind(test_signature)
         .execute(storage.pool())
         .await;
+
+    Ok(())
 }

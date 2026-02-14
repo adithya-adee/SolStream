@@ -41,29 +41,22 @@ use sqlx::PgPool;
 
 // ================================================================================================
 // Event Definition
+// Events are typed data structures that represent the specific blockchain action we're interested in.
 // ================================================================================================
 
 /// Represents a System Program transfer event (native SOL transfer).
-///
-/// This struct captures the essential information from a System Program transfer:
-/// - Source wallet (from)
-/// - Destination wallet (to)
-/// - Transfer amount (in lamports)
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
 pub struct SystemTransferEvent {
     /// Source wallet public key
     pub from: Pubkey,
     /// Destination wallet public key
     pub to: Pubkey,
-    /// Amount transferred in lamports (1 SOL = 1,000,000,000 lamports)
+    /// Amount transferred in lamports
     pub amount: u64,
 }
 
 impl EventDiscriminator for SystemTransferEvent {
-    /// Returns the 8-byte discriminator for this event type.
-    ///
-    /// The discriminator is a hash of the event name, used by the SDK to route
-    /// events to the correct handler.
+    /// Provides a unique identifier for the event type, allowing the SDK to route it to the correct handler.
     fn discriminator() -> [u8; 8] {
         calculate_discriminator("SystemTransferEvent")
     }
@@ -71,61 +64,43 @@ impl EventDiscriminator for SystemTransferEvent {
 
 // ================================================================================================
 // Instruction Decoder
+// Decoders are responsible for parsing raw Solana instructions and extracting typed events.
 // ================================================================================================
 
 /// Decoder for System Program transfer instructions.
-///
-/// This decoder parses raw Solana instructions and extracts System Program transfer data.
-/// It handles the `transfer` instruction type from the System Program.
 pub struct SystemTransferDecoder;
 
 impl InstructionDecoder<SystemTransferEvent> for SystemTransferDecoder {
     /// Decodes a Solana instruction into a System transfer event.
-    ///
-    /// # Arguments
-    ///
-    /// * `instruction` - The UI instruction from the transaction
-    ///
-    /// # Returns
-    ///
-    /// * `Some(SystemTransferEvent)` - If the instruction is a valid System Program transfer
-    /// * `None` - If the instruction is not a System Program transfer or parsing fails
     fn decode(&self, instruction: &UiInstruction) -> Option<SystemTransferEvent> {
-        // Only process parsed instructions
         match instruction {
             UiInstruction::Parsed(UiParsedInstruction::Parsed(parsed)) => {
-                // Verify this is a System Program instruction
+                // Ensure the instruction belongs to the expected program
                 if parsed.program != "system" {
                     return None;
                 }
 
-                // Extract the instruction type and info
                 let parsed_info = parsed.parsed.as_object()?;
                 let instruction_type = parsed_info.get("type")?.as_str()?;
 
-                // Only process transfer instructions
+                // Only process 'transfer' instructions
                 if instruction_type != "transfer" {
                     return None;
                 }
 
-                // Extract transfer details from the instruction info
                 let info = parsed_info.get("info")?.as_object()?;
 
-                // Get source and destination wallet addresses
+                // Extract and parse the transfer details
                 let source = info.get("source")?.as_str()?;
                 let destination = info.get("destination")?.as_str()?;
-
-                // Get amount in lamports
                 let lamports = info.get("lamports")?.as_u64()?;
 
-                // Parse addresses and create event
                 Some(SystemTransferEvent {
                     from: source.parse().ok()?,
                     to: destination.parse().ok()?,
                     amount: lamports,
                 })
             }
-            // Ignore non-parsed instructions
             _ => None,
         }
     }
@@ -133,31 +108,15 @@ impl InstructionDecoder<SystemTransferEvent> for SystemTransferDecoder {
 
 // ================================================================================================
 // Event Handler
+// Handlers implement the custom business logic for processing each extracted event.
 // ================================================================================================
 
 /// Handler for System Program transfer events.
-///
-/// This handler:
-/// 1. Creates the database schema (system_transfers table)
-/// 2. Processes each transfer event by inserting it into the database
-/// 3. Ensures idempotency using the transaction signature as primary key
 pub struct SystemTransferHandler;
 
 #[async_trait]
 impl EventHandler<SystemTransferEvent> for SystemTransferHandler {
-    /// Initializes the database schema for System transfers.
-    ///
-    /// Creates the `system_transfers` table if it doesn't exist. This method is called
-    /// once during indexer startup.
-    ///
-    /// # Schema
-    ///
-    /// - `signature`: Transaction signature (primary key for idempotency)
-    /// - `from_wallet`: Source wallet address
-    /// - `to_wallet`: Destination wallet address
-    /// - `amount_lamports`: Transfer amount in lamports
-    /// - `amount_sol`: Transfer amount in SOL (computed)
-    /// - `indexed_at`: Timestamp when the transfer was indexed
+    /// Initializes the database schema. This is called once on startup.
     async fn initialize_schema(&self, db: &PgPool) -> Result<(), SolanaIndexerError> {
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS system_transfers (
@@ -175,18 +134,8 @@ impl EventHandler<SystemTransferEvent> for SystemTransferHandler {
         Ok(())
     }
 
-    /// Handles a System transfer event by storing it in the database.
-    ///
-    /// # Arguments
-    ///
-    /// * `event` - The decoded System transfer event
-    /// * `db` - Database connection pool
-    /// * `signature` - Transaction signature (for idempotency)
-    ///
-    /// # Idempotency
-    ///
-    /// Uses `ON CONFLICT DO NOTHING` to ensure the same transaction is not
-    /// processed multiple times.
+    /// Processes a decoded event. This is where you perform database operations,
+    /// trigger webhooks, or update caches.
     async fn handle(
         &self,
         event: SystemTransferEvent,
@@ -194,16 +143,14 @@ impl EventHandler<SystemTransferEvent> for SystemTransferHandler {
         db: &PgPool,
     ) -> Result<(), SolanaIndexerError> {
         let signature = &context.signature;
-        // Convert lamports to SOL for display
         let sol_amount = event.amount as f64 / 1_000_000_000.0;
 
-        // Log the transfer for monitoring
         println!(
-            "📝 SOL Transfer: {} → {} ({:.9} SOL / {} lamports) [{}]",
-            event.from, event.to, sol_amount, event.amount, signature
+            "📝 SOL Transfer: {} → {} ({:.9} SOL) [{}]",
+            event.from, event.to, sol_amount, signature
         );
 
-        // Insert into database with idempotency guarantee
+        // Store the event in the database using an idempotent query
         sqlx::query(
             "INSERT INTO system_transfers (signature, from_wallet, to_wallet, amount_lamports)
              VALUES ($1, $2, $3, $4)
@@ -236,8 +183,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Configuration
     // ============================================================================================
 
-    let rpc_url = std::env::var("RPC_URL").expect("RPC_URL must be set in .env");
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set in .env");
+    let rpc_url = std::env::var("RPC_URL")?;
+    let database_url = std::env::var("DATABASE_URL")?;
     let program_id = std::env::var("PROGRAM_ID")
         .unwrap_or_else(|_| "11111111111111111111111111111111".to_string());
 
@@ -279,7 +226,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Register the System Transfer decoder with the decoder registry
     // The decoder registry matches by program name (e.g., "system", "spl-token")
     // NOT by program ID (the pubkey)
-    indexer.decoder_registry_mut().register(
+    indexer.decoder_registry_mut()?.register(
         "system".to_string(), // Program name as it appears in parsed instructions
         Box::new(
             Box::new(SystemTransferDecoder) as Box<dyn InstructionDecoder<SystemTransferEvent>>
@@ -300,7 +247,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Register the handler with the indexer
     // The SDK will automatically route SystemTransferEvent instances to this handler
     indexer
-        .handler_registry_mut()
+        .handler_registry_mut()?
         .register(SystemTransferEvent::discriminator(), Box::new(handler_box))?;
 
     println!("✅ Handler registered\n");

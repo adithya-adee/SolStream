@@ -140,8 +140,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("🚀 Helius System Transfer Indexer\n");
 
-    let api_key = std::env::var("HELIUS_API_KEY").expect("HELIUS_API_KEY must be set in .env");
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set in .env");
+    let api_key = std::env::var("HELIUS_API_KEY")?;
+    let database_url = std::env::var("DATABASE_URL")?;
     let program_id = std::env::var("PROGRAM_ID")
         .unwrap_or_else(|_| "11111111111111111111111111111111".to_string());
 
@@ -149,7 +149,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let network = match network_str.to_lowercase().as_str() {
         "mainnet" => HeliusNetwork::Mainnet,
         "devnet" => HeliusNetwork::Devnet,
-        _ => panic!("Invalid HELIUS_NETWORK: must be 'mainnet' or 'devnet'"),
+        _ => return Err("Invalid HELIUS_NETWORK: must be 'mainnet' or 'devnet'".into()),
     };
 
     println!("📋 Configuration:");
@@ -182,7 +182,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     handler.initialize_schema(&db_pool).await?;
 
     // Register Decoder
-    indexer.decoder_registry_mut().register(
+    indexer.decoder_registry_mut()?.register(
         "system".to_string(),
         Box::new(
             Box::new(SystemTransferDecoder) as Box<dyn InstructionDecoder<SystemTransferEvent>>
@@ -190,7 +190,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     // Register Handler
-    indexer.handler_registry_mut().register(
+    indexer.handler_registry_mut()?.register(
         SystemTransferEvent::discriminator(),
         Box::new(Box::new(handler) as Box<dyn EventHandler<SystemTransferEvent>>),
     )?;

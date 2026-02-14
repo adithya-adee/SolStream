@@ -151,9 +151,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Configuration
     // ============================================================================================
 
-    let ws_url = std::env::var("WS_URL").expect("WS_URL must be set in .env");
-    let rpc_url = std::env::var("RPC_URL").expect("RPC_URL must be set in .env");
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set in .env");
+    let ws_url = std::env::var("WS_URL")?;
+    let rpc_url = std::env::var("RPC_URL")?;
+    let database_url = std::env::var("DATABASE_URL")?;
     let program_id = std::env::var("PROGRAM_ID")
         .unwrap_or_else(|_| "11111111111111111111111111111111".to_string());
 
@@ -179,7 +179,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Register Decoder
     // ============================================================================================
 
-    indexer.decoder_registry_mut().register(
+    indexer.decoder_registry_mut()?.register(
         "system".to_string(),
         Box::new(
             Box::new(SystemTransferDecoder) as Box<dyn InstructionDecoder<SystemTransferEvent>>
@@ -192,7 +192,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let handler: Box<dyn EventHandler<SystemTransferEvent>> = Box::new(SystemTransferHandler);
     indexer
-        .handler_registry_mut()
+        .handler_registry_mut()?
         .register(SystemTransferEvent::discriminator(), Box::new(handler))?;
 
     // ============================================================================================

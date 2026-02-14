@@ -237,9 +237,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Configuration
     // ============================================================================================
 
-    let rpc_url = std::env::var("RPC_URL").expect("RPC_URL must be set in .env");
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set in .env");
-    let program_id = std::env::var("PROGRAM_ID").expect("PROGRAM_ID must be set in .env");
+    let rpc_url = std::env::var("RPC_URL")?;
+    let database_url = std::env::var("DATABASE_URL")?;
+    let program_id = std::env::var("PROGRAM_ID")?;
 
     println!("📋 Configuration:");
     println!("   RPC URL: {}", rpc_url);
@@ -279,7 +279,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Register the SPL Transfer decoder with the decoder registry
     // The decoder registry matches by program name (e.g., "spl-token", "system")
     // NOT by program ID (the pubkey)
-    indexer.decoder_registry_mut().register(
+    indexer.decoder_registry_mut()?.register(
         "spl-token".to_string(), // Program name as it appears in parsed instructions
         Box::new(Box::new(SplTransferDecoder) as Box<dyn InstructionDecoder<SplTransferEvent>>),
     )?;
@@ -298,7 +298,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Register the handler with the indexer
     // The SDK will automatically route SplTransferEvent instances to this handler
     indexer
-        .handler_registry_mut()
+        .handler_registry_mut()?
         .register(SplTransferEvent::discriminator(), Box::new(handler_box))?;
 
     println!("✅ Handler registered\n");

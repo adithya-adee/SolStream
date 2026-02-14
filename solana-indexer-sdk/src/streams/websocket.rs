@@ -35,7 +35,7 @@ use crate::utils::error::{Result, SolanaIndexerError};
 ///     .with_database("postgresql://localhost/db")
 ///     .program_id("11111111111111111111111111111111")
 ///     .build()?;
-/// let program_id = Pubkey::from_str("11111111111111111111111111111111").unwrap();
+/// let program_id = "11111111111111111111111111111111".parse::<Pubkey>()?;
 /// let source = WebSocketSource::new("ws://127.0.0.1:8900", vec![program_id], 5);
 /// # Ok(())
 /// # }
@@ -296,7 +296,8 @@ mod tests {
     }
 
     #[test]
-    fn test_logs_notification_deserialization() {
+    fn test_logs_notification_deserialization(
+    ) -> std::result::Result<(), Box<dyn std::error::Error>> {
         let json_data = r#"{
             "jsonrpc": "2.0",
             "method": "logsNotification",
@@ -318,11 +319,12 @@ mod tests {
             }
         }"#;
 
-        let notification: LogsNotification = serde_json::from_str(json_data).unwrap();
+        let notification: LogsNotification = serde_json::from_str(json_data)?;
         assert_eq!(
             notification.params.result.value.signature,
             "5h6xBEauJ3PK6rJ9pG4Q8Xc6rJ9pG4Q8Xc6rJ9pG4Q8Xc6rJ9pG4Q8Xc6rJ9pG4Q8Xc6rJ9pG4Q8Xc"
         );
         assert_eq!(notification.params.result.value.logs.len(), 2);
+        Ok(())
     }
 }

@@ -139,9 +139,17 @@ impl BackfillEngine {
                                                 // was associated with multiple instructions or programs.
                                                 let is_relevant =
                                                     msg.account_keys.iter().any(|acc| {
-                                                        self.config.program_ids.iter().any(|p| {
-                                                            *p == acc.pubkey.parse().unwrap()
-                                                        })
+                                                        if let Ok(acc_pubkey) =
+                                                            solana_sdk::pubkey::Pubkey::from_str(
+                                                                &acc.pubkey,
+                                                            )
+                                                        {
+                                                            self.config
+                                                                .program_ids
+                                                                .contains(&acc_pubkey)
+                                                        } else {
+                                                            false
+                                                        }
                                                     });
                                                 if is_relevant {
                                                     relevant_signatures.push((

@@ -12,6 +12,7 @@ use solana_sdk::account::Account;
 use sqlx::PgPool;
 
 // 1. Define your Account structure
+// The struct must be Borsh-serializable to match how Solana accounts are stored.
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
 pub struct UserProfile {
     pub discriminator: [u8; 8],
@@ -20,34 +21,36 @@ pub struct UserProfile {
 }
 
 // 2. Implement EventDiscriminator
+// This allows the SDK to route decoded account data to the correct handler.
 impl EventDiscriminator for UserProfile {
     fn discriminator() -> [u8; 8] {
-        // Example discriminator (e.g., sha256("account:UserProfile")[..8])
+        // In Anchor-based programs, this is the first 8 bytes of the account data.
         [101, 202, 103, 204, 105, 206, 107, 208]
     }
 }
 
 // 3. Implement AccountDecoder
+// Converts raw account data (Account) into our typed UserProfile struct.
 pub struct UserProfileDecoder;
 
 impl AccountDecoder<UserProfile> for UserProfileDecoder {
     fn decode(&self, account: &Account) -> Option<UserProfile> {
-        // Typically check owner matches program_id first
+        // Typically check owner matches program_id first to avoid processing unrelated accounts
         if account.data.len() < 8 {
             return None;
         }
 
-        // Check discriminator
+        // Verify the account discriminator before attempting full deserialization
         if account.data[0..8] != UserProfile::discriminator() {
             return None;
         }
 
-        // Deserialize
         UserProfile::try_from_slice(&account.data).ok()
     }
 }
 
 // 4. Implement EventHandler
+// Processes the typed UserProfile event. This is where we persist data to the database.
 pub struct UserProfileHandler;
 
 #[async_trait]
@@ -64,7 +67,7 @@ impl EventHandler<UserProfile> for UserProfileHandler {
             signature, event.username, event.reputation
         );
 
-        // Store in Database
+        // Standard upsert logic to ensure we always have the latest state of the account
         sqlx::query("INSERT INTO users (username, reputation, last_signature) VALUES ($1, $2, $3) ON CONFLICT (username) DO UPDATE SET reputation = $2, last_signature = $3")
             .bind(&event.username)
             .bind(event.reputation as i64)
@@ -78,6 +81,7 @@ impl EventHandler<UserProfile> for UserProfileHandler {
 }
 
 // 5. Implement SchemaInitializer
+// Automates the creation of required database tables on indexer startup.
 pub struct UserSchemaInitializer;
 
 #[async_trait]
@@ -118,11 +122,11 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Register Components
     indexer.register_schema_initializer(Box::new(UserSchemaInitializer));
 
-    indexer.account_decoder_registry_mut().register(Box::new(
+    indexer.account_decoder_registry_mut()?.register(Box::new(
         Box::new(UserProfileDecoder) as Box<dyn AccountDecoder<UserProfile>>
     ))?;
 
-    indexer.handler_registry_mut().register(
+    indexer.handler_registry_mut()?.register(
         UserProfile::discriminator(),
         Box::new(Box::new(UserProfileHandler) as Box<dyn EventHandler<UserProfile>>),
     )?;

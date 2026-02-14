@@ -151,20 +151,18 @@ mod tests {
     }
 
     #[test]
-    fn test_register_and_decode() {
+    fn test_register_and_decode() -> Result<()> {
         let mut registry = LogDecoderRegistry::new();
         let program_id_str = "11111111111111111111111111111111";
-        let program_id = Pubkey::from_str(program_id_str).unwrap();
+        let program_id = Pubkey::from_str(program_id_str)?;
 
         // Register a decoder that succeeds
-        registry
-            .register(
-                program_id_str.to_string(),
-                Box::new(MockLogDecoder {
-                    should_decode: true,
-                }),
-            )
-            .unwrap();
+        registry.register(
+            program_id_str.to_string(),
+            Box::new(MockLogDecoder {
+                should_decode: true,
+            }),
+        )?;
 
         // Create a matching event
         let event = ParsedEvent {
@@ -180,34 +178,30 @@ mod tests {
 
         // Test unsuccessful decoding (decoder returns None)
         registry.decoders.clear();
-        registry
-            .register(
-                program_id_str.to_string(),
-                Box::new(MockLogDecoder {
-                    should_decode: false,
-                }),
-            )
-            .unwrap();
+        registry.register(
+            program_id_str.to_string(),
+            Box::new(MockLogDecoder {
+                should_decode: false,
+            }),
+        )?;
         let results = registry.decode_logs(std::slice::from_ref(&event));
         assert!(results.is_empty());
+        Ok(())
     }
 
     #[test]
-    fn test_decode_no_matching_program() {
+    fn test_decode_no_matching_program() -> Result<()> {
         let mut registry = LogDecoderRegistry::new();
         let program_id_str = "11111111111111111111111111111111";
-        registry
-            .register(
-                program_id_str.to_string(),
-                Box::new(MockLogDecoder {
-                    should_decode: true,
-                }),
-            )
-            .unwrap();
+        registry.register(
+            program_id_str.to_string(),
+            Box::new(MockLogDecoder {
+                should_decode: true,
+            }),
+        )?;
 
         // Event from different program (Token Program)
-        let other_program =
-            Pubkey::from_str("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").unwrap();
+        let other_program = Pubkey::from_str("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")?;
         let event = ParsedEvent {
             event_type: EventType::ProgramLog,
             program_id: Some(other_program),
@@ -216,5 +210,6 @@ mod tests {
 
         let results = registry.decode_logs(std::slice::from_ref(&event));
         assert!(results.is_empty());
+        Ok(())
     }
 }

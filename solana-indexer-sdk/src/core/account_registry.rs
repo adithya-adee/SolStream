@@ -112,13 +112,11 @@ mod tests {
     }
 
     #[test]
-    fn test_register_and_decode() {
+    fn test_register_and_decode() -> Result<()> {
         let mut registry = AccountDecoderRegistry::new();
-        registry
-            .register(Box::new(
-                Box::new(TestDecoder) as Box<dyn crate::types::traits::AccountDecoder<TestAccount>>
-            ))
-            .unwrap();
+        registry.register(Box::new(
+            Box::new(TestDecoder) as Box<dyn crate::types::traits::AccountDecoder<TestAccount>>
+        ))?;
 
         let account = Account {
             lamports: 100,
@@ -133,8 +131,10 @@ mod tests {
         let (discriminator, data) = &decoded[0];
         assert_eq!(*discriminator, TestAccount::discriminator());
 
-        let event = TestAccount::try_from_slice(data).unwrap();
+        let event = TestAccount::try_from_slice(data)
+            .map_err(|e| SolanaIndexerError::DecodingError(e.to_string()))?;
         assert_eq!(event.value, 10);
+        Ok(())
     }
 
     #[test]

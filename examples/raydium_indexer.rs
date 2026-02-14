@@ -120,7 +120,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut indexer = SolanaIndexer::new(config).await?;
 
     // Register Decoder
-    indexer.decoder_registry_mut().register(
+    indexer.decoder_registry_mut()?.register(
         RAYDIUM_V4_PROGRAM_ID.to_string(),
         Box::new(Box::new(RaydiumSwapDecoder) as Box<dyn InstructionDecoder<RaydiumSwapEvent>>),
     )?;
@@ -128,7 +128,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Register Handler
     let handler: Box<dyn EventHandler<RaydiumSwapEvent>> = Box::new(RaydiumSwapHandler);
     indexer
-        .handler_registry_mut()
+        .handler_registry_mut()?
         .register(RaydiumSwapEvent::discriminator(), Box::new(handler))?;
 
     // Start with graceful shutdown support

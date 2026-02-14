@@ -15,8 +15,8 @@ use std::collections::HashMap;
 /// # Example
 ///
 /// ```
-/// use solana_indexer_sdk::Idl;
-///
+/// # use solana_indexer_sdk::Idl;
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let idl_json = r#"{
 ///     "version": "0.1.0",
 ///     "name": "my_program",
@@ -25,8 +25,10 @@ use std::collections::HashMap;
 ///     "events": []
 /// }"#;
 ///
-/// let idl: Idl = serde_json::from_str(idl_json).unwrap();
+/// let idl: Idl = serde_json::from_str(idl_json)?;
 /// assert_eq!(idl.name, "my_program");
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Idl {
@@ -134,8 +136,8 @@ impl Idl {
     /// # Example
     ///
     /// ```
-    /// use solana_indexer_sdk::Idl;
-    ///
+    /// # use solana_indexer_sdk::Idl;
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let idl_json = r#"{
     ///     "version": "0.1.0",
     ///     "name": "my_program",
@@ -144,8 +146,10 @@ impl Idl {
     ///     "events": []
     /// }"#;
     ///
-    /// let idl = Idl::parse(idl_json).unwrap();
+    /// let idl = Idl::parse(idl_json)?;
     /// assert_eq!(idl.name, "my_program");
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn parse(json: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(json)
@@ -156,8 +160,8 @@ impl Idl {
     /// # Example
     ///
     /// ```
-    /// use solana_indexer_sdk::Idl;
-    ///
+    /// # use solana_indexer_sdk::Idl;
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let idl_json = r#"{
     ///     "version": "0.1.0",
     ///     "name": "my_program",
@@ -169,9 +173,11 @@ impl Idl {
     ///     ]
     /// }"#;
     ///
-    /// let idl = Idl::parse(idl_json).unwrap();
+    /// let idl = Idl::parse(idl_json)?;
     /// let event_names = idl.event_names();
     /// assert_eq!(event_names, vec!["TransferEvent", "DepositEvent"]);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn event_names(&self) -> Vec<String> {
@@ -183,8 +189,8 @@ impl Idl {
     /// # Example
     ///
     /// ```
-    /// use solana_indexer_sdk::Idl;
-    ///
+    /// # use solana_indexer_sdk::Idl;
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let idl_json = r#"{
     ///     "version": "0.1.0",
     ///     "name": "my_program",
@@ -196,9 +202,11 @@ impl Idl {
     ///     "events": []
     /// }"#;
     ///
-    /// let idl = Idl::parse(idl_json).unwrap();
+    /// let idl = Idl::parse(idl_json)?;
     /// let instruction_names = idl.instruction_names();
     /// assert_eq!(instruction_names, vec!["transfer", "deposit"]);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn instruction_names(&self) -> Vec<String> {
@@ -302,7 +310,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_idl_parse() {
+    fn test_idl_parse() -> std::result::Result<(), Box<dyn std::error::Error>> {
         let idl_json = r#"{
             "version": "0.1.0",
             "name": "test_program",
@@ -311,13 +319,14 @@ mod tests {
             "events": []
         }"#;
 
-        let idl = Idl::parse(idl_json).unwrap();
+        let idl = Idl::parse(idl_json)?;
         assert_eq!(idl.version, "0.1.0");
         assert_eq!(idl.name, "test_program");
+        Ok(())
     }
 
     #[test]
-    fn test_idl_with_events() {
+    fn test_idl_with_events() -> std::result::Result<(), Box<dyn std::error::Error>> {
         let idl_json = r#"{
             "version": "0.1.0",
             "name": "test_program",
@@ -335,14 +344,15 @@ mod tests {
             ]
         }"#;
 
-        let idl = Idl::parse(idl_json).unwrap();
+        let idl = Idl::parse(idl_json)?;
         assert_eq!(idl.events.len(), 1);
         assert_eq!(idl.events[0].name, "TransferEvent");
         assert_eq!(idl.events[0].fields.len(), 3);
+        Ok(())
     }
 
     #[test]
-    fn test_event_names() {
+    fn test_event_names() -> std::result::Result<(), Box<dyn std::error::Error>> {
         let idl_json = r#"{
             "version": "0.1.0",
             "name": "test_program",
@@ -354,13 +364,14 @@ mod tests {
             ]
         }"#;
 
-        let idl = Idl::parse(idl_json).unwrap();
+        let idl = Idl::parse(idl_json)?;
         let names = idl.event_names();
         assert_eq!(names, vec!["Event1", "Event2"]);
+        Ok(())
     }
 
     #[test]
-    fn test_instruction_names() {
+    fn test_instruction_names() -> std::result::Result<(), Box<dyn std::error::Error>> {
         let idl_json = r#"{
             "version": "0.1.0",
             "name": "test_program",
@@ -372,9 +383,10 @@ mod tests {
             "events": []
         }"#;
 
-        let idl = Idl::parse(idl_json).unwrap();
+        let idl = Idl::parse(idl_json)?;
         let names = idl.instruction_names();
         assert_eq!(names, vec!["transfer", "deposit"]);
+        Ok(())
     }
 
     #[test]

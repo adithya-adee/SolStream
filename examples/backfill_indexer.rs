@@ -27,8 +27,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Default configuration from env
     let rpc_url =
         env::var("RPC_URL").unwrap_or_else(|_| "https://api.devnet.solana.com".to_string());
-    let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let program_id = env::var("PROGRAM_ID").expect("PROGRAM_ID must be set");
+    let db_url = env::var("DATABASE_URL")?;
+    let program_id = env::var("PROGRAM_ID")?;
 
     // Configure backfill settings
     let backfill_config = BackfillConfig {

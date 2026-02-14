@@ -68,11 +68,10 @@ where
     T: EventDiscriminator + BorshSerialize + Send + Sync + 'static,
 {
     fn decode_dynamic(&self, instruction: &UiInstruction) -> Option<([u8; 8], Vec<u8>)> {
-        self.decode(instruction).map(|event| {
-            let discriminator = T::discriminator();
-            let data = borsh::to_vec(&event).expect("Failed to serialize event");
-            (discriminator, data)
-        })
+        let event = self.decode(instruction)?;
+        let discriminator = T::discriminator();
+        let data = borsh::to_vec(&event).ok()?;
+        Some((discriminator, data))
     }
 }
 
@@ -104,11 +103,10 @@ where
     T: EventDiscriminator + BorshSerialize + Send + Sync + 'static,
 {
     fn decode_log_dynamic(&self, event: &ParsedEvent) -> Option<([u8; 8], Vec<u8>)> {
-        self.decode(event).map(|event| {
-            let discriminator = T::discriminator();
-            let data = borsh::to_vec(&event).expect("Failed to serialize event");
-            (discriminator, data)
-        })
+        let event = self.decode(event)?;
+        let discriminator = T::discriminator();
+        let data = borsh::to_vec(&event).ok()?;
+        Some((discriminator, data))
     }
 }
 
@@ -146,11 +144,10 @@ where
         &self,
         account: &solana_sdk::account::Account,
     ) -> Option<([u8; 8], Vec<u8>)> {
-        self.decode(account).map(|event| {
-            let discriminator = T::discriminator();
-            let data = borsh::to_vec(&event).expect("Failed to serialize event");
-            (discriminator, data)
-        })
+        let event = self.decode(account)?;
+        let discriminator = T::discriminator();
+        let data = borsh::to_vec(&event).ok()?;
+        Some((discriminator, data))
     }
 }
 
@@ -607,15 +604,16 @@ mod tests {
     }
 
     #[test]
-    fn test_handler_registry_register() {
+    fn test_handler_registry_register() -> Result<()> {
         let mut registry = HandlerRegistry::new();
         let discriminator = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
 
         let handler = Box::new(MockDynamicHandler { discriminator });
-        registry.register(discriminator, handler).unwrap();
+        registry.register(discriminator, handler)?;
 
         assert_eq!(registry.len(), 1);
         assert!(!registry.is_empty());
+        Ok(())
     }
 
     #[tokio::test]

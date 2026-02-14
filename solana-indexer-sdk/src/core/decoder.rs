@@ -461,40 +461,40 @@ mod tests {
     fn test_parse_program_invoke_log() {
         let log = "Program 11111111111111111111111111111111 invoke [1]";
 
-        let event = Decoder::parse_single_log(log);
-        assert!(event.is_some());
-
-        let event = event.unwrap();
-        assert_eq!(event.event_type, EventType::ProgramInvoke);
-        assert!(event.program_id.is_some());
+        if let Some(event) = Decoder::parse_single_log(log) {
+            assert_eq!(event.event_type, EventType::ProgramInvoke);
+            assert!(event.program_id.is_some());
+        } else {
+            panic!("Expected event to be parsed");
+        }
     }
 
     #[test]
     fn test_parse_program_data_log() {
         let log = "Program data: SGVsbG8gV29ybGQ=";
 
-        let event = Decoder::parse_single_log(log);
-        assert!(event.is_some());
-
-        let event = event.unwrap();
-        assert_eq!(event.event_type, EventType::ProgramData);
-        assert_eq!(event.data, Some("SGVsbG8gV29ybGQ=".to_string()));
+        if let Some(event) = Decoder::parse_single_log(log) {
+            assert_eq!(event.event_type, EventType::ProgramData);
+            assert_eq!(event.data, Some("SGVsbG8gV29ybGQ=".to_string()));
+        } else {
+            panic!("Expected event to be parsed");
+        }
     }
 
     #[test]
     fn test_parse_program_log() {
         let log = "Program log: Instruction: Transfer";
 
-        let event = Decoder::parse_single_log(log);
-        assert!(event.is_some());
-
-        let event = event.unwrap();
-        assert_eq!(event.event_type, EventType::ProgramLog);
-        assert_eq!(event.data, Some("Instruction: Transfer".to_string()));
+        if let Some(event) = Decoder::parse_single_log(log) {
+            assert_eq!(event.event_type, EventType::ProgramLog);
+            assert_eq!(event.data, Some("Instruction: Transfer".to_string()));
+        } else {
+            panic!("Expected event to be parsed");
+        }
     }
 
     #[test]
-    fn test_parse_event_logs() {
+    fn test_parse_event_logs() -> Result<()> {
         let decoder = Decoder::new();
         let logs = vec![
             "Program 11111111111111111111111111111111 invoke [1]".to_string(),
@@ -503,7 +503,8 @@ mod tests {
             "Program 11111111111111111111111111111111 success".to_string(),
         ];
 
-        let events = decoder.parse_event_logs(&logs).unwrap();
+        let events = decoder.parse_event_logs(&logs)?;
         assert_eq!(events.len(), 3); // invoke, log, data
+        Ok(())
     }
 }

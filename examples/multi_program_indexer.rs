@@ -149,44 +149,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // 1. Create Shared Storage
+    // By sharing the storage instance, multiple indexers can coordinate on processed
+    // slots and signatures, ensuring atomic updates across different programs.
     println!("Initializing shared storage...");
     let storage = Arc::new(Storage::new(&db_url).await?);
-    // Initialize schema (creates tables if needed)
+    // Initialize the core SDK tables (processed_transactions, etc.)
     storage.initialize().await?;
 
     // 2. Configure Indexer 1 (System Program)
+    // Each indexer can have its own polling interval and batch size tailored to
+    // the program's transaction volume.
     let config_system = SolanaIndexerConfigBuilder::new()
         .with_rpc(rpc_url.clone())
         .with_database(db_url.clone())
         .program_id(SYSTEM_PROGRAM_ID)
         .with_poll_interval(10)
-        .with_batch_size(5) // Reduce batch size for public RPC
-        .build()?; // Note: database_url in config is ignored if we use new_with_storage, but builder might require it?
-                   // Builder requires .with_database() to be called?
-                   // Let's check builder. It defaults storage related fields but database_url is optional?
-                   // Builder struct has `database_url: Option<String>`. `build()` calls `unwrap()` on it?
-                   // Let's check `src/config/mod.rs`.
+        .with_batch_size(5)
+        .build()?;
 
     // 3. Configure Indexer 2 (Memo Program)
     let config_memo = SolanaIndexerConfigBuilder::new()
         .with_rpc(rpc_url)
         .with_database(db_url)
         .program_id(MEMO_PROGRAM_ID)
-        .with_poll_interval(15) // Poll less frequently
-        .with_batch_size(5) // Reduce batch size
+        .with_poll_interval(15)
+        .with_batch_size(5)
         .build()?;
 
     // 4. Create Indexers
-    // We need to patch builder if it requires DB url, or provide a dummy one.
-    // Providing dummy one is fine since `new_with_storage` uses the passed storage.
-
+    // Using `new_with_storage` allows us to inject the shared database connection pool.
     let mut indexer_system = SolanaIndexer::new_with_storage(config_system, storage.clone());
     let mut indexer_memo = SolanaIndexer::new_with_storage(config_memo, storage.clone());
 
     // 5. Register Decoders & Handlers
 
     // System
-    indexer_system.decoder_registry_mut().register(
+    indexer_system.decoder_registry_mut()?.register(
         "system".to_string(),
         Box::new(
             Box::new(SystemTransferDecoder) as Box<dyn InstructionDecoder<SystemTransferEvent>>
@@ -194,19 +192,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let system_handler: Box<dyn EventHandler<SystemTransferEvent>> =
         Box::new(SystemTransferHandler);
-    indexer_system.handler_registry_mut().register(
+    indexer_system.handler_registry_mut()?.register(
         SystemTransferEvent::discriminator(),
         Box::new(system_handler),
     )?;
 
     // Memo
-    indexer_memo.decoder_registry_mut().register(
+    indexer_memo.decoder_registry_mut()?.register(
         "memo".to_string(),
         Box::new(Box::new(MemoDecoder) as Box<dyn InstructionDecoder<MemoEvent>>),
     )?;
     let memo_handler: Box<dyn EventHandler<MemoEvent>> = Box::new(MemoHandler);
     indexer_memo
-        .handler_registry_mut()
+        .handler_registry_mut()?
         .register(MemoEvent::discriminator(), Box::new(memo_handler))?;
 
     // 6. Run Concurrent Indexers

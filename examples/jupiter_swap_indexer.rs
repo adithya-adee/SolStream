@@ -61,27 +61,26 @@ impl EventDiscriminator for JupiterSwapEvent {
 pub struct JupiterLogDecoder;
 
 impl LogDecoder<JupiterSwapEvent> for JupiterLogDecoder {
+    /// Decodes a Jupiter Swap event from program logs.
+    ///
+    /// Note: Program logs on Solana are unstructured strings. The SDK's log parser
+    /// identifies "Program log:" and "Program data:" lines. For high-performance
+    /// indexing, using logs can be faster than full transaction fetching if
+    /// the program emits Anchor-style events.
     fn decode(&self, event: &ParsedEvent) -> Option<JupiterSwapEvent> {
-        // Note: The SDK's stateless log parser doesn't attach the program ID
-        // to "Program log:" lines (it only does for "Program invoke").
-        // Thus, we skip the strict ID check inside the decoder for this example,
-        // trusting the RPC filter handled the top-level filtering.
-
-        // We are looking for lines that contain specific Jupiter instructions.
-
-        // We are looking for "Program log: Instruction: Route" or similar
-        // The event.data contains the log message string
+        // The event.data contains the log message string.
+        // In a production environment, you would use regex or a formal parser
+        // to extract precise data from these strings.
         if let Some(log_message) = &event.data {
-            // Simple string matching for demonstration
+            // Check for Jupiter-specific instruction logs
             if log_message.contains("Instruction: Route")
                 || log_message.contains("Instruction: SharedAccountsRoute")
             {
-                // In a real indexer, you would correlate this with the inner instructions (transfers)
-                // to get exact amounts.
-                // Here we return a "Detected" event to prove indexing works.
+                // Note: Correlating logs with amounts often requires parsing inner-instructions.
+                // This example serves as a "detection" indexer.
                 return Some(JupiterSwapEvent {
                     amm: "Jupiter v6".to_string(),
-                    input_mint: "See Transaction".to_string(), // Requires inner-instruction parsing
+                    input_mint: "See Transaction".to_string(),
                     output_mint: "See Transaction".to_string(),
                     input_amount: 0,
                     output_amount: 0,
@@ -162,7 +161,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Respecting rate limits with 30s polling intervals.\n");
 
     let rpc_url = "https://api.mainnet-beta.solana.com".to_string();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set in .env");
+    let database_url = std::env::var("DATABASE_URL")?;
     let jupiter_program_id = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
 
     // Build configuration
@@ -191,13 +190,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Register the decoder for the Jupiter program ID
     // Note: The SDK matches by program name for parsed instructions.
     // For Jupiter v6, the parsed program name is often "jupiter-v6" or the program ID itself.
-    indexer.log_decoder_registry_mut().register(
+    indexer.log_decoder_registry_mut()?.register(
         jupiter_program_id.to_string(),
         Box::new(Box::new(JupiterLogDecoder) as Box<dyn LogDecoder<JupiterSwapEvent>>),
     )?;
 
     // Register the handler
-    indexer.handler_registry_mut().register(
+    indexer.handler_registry_mut()?.register(
         JupiterSwapEvent::discriminator(),
         Box::new(Box::new(handler) as Box<dyn EventHandler<JupiterSwapEvent>>),
     )?;
