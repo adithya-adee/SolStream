@@ -15,8 +15,8 @@
 //! PROGRAM_ID=... \
 //! cargo run --example backfill_indexer
 //! ```
-use solana_indexer::config::BackfillConfig;
-use solana_indexer::{SolanaIndexer, SolanaIndexerConfigBuilder};
+use solana_indexer_sdk::config::BackfillConfig;
+use solana_indexer_sdk::{SolanaIndexer, SolanaIndexerConfigBuilder};
 use std::env;
 
 #[tokio::main]

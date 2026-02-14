@@ -20,7 +20,7 @@
 //! Set environment variables in `.env`:
 //! ```env
 //! RPC_URL=http://127.0.0.1:8899
-//! DATABASE_URL=postgresql://postgres:password@localhost/solana_indexer
+//! DATABASE_URL=postgresql://postgres:password@localhost/solana_indexer_sdk
 //! ```
 //!
 //! Run the example:
@@ -30,9 +30,9 @@
 
 use async_trait::async_trait;
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_indexer::{
-    EventDiscriminator, EventHandler, InstructionDecoder, SolanaIndexerConfigBuilder,
-    SolanaIndexerError, calculate_discriminator,
+use solana_indexer_sdk::{
+    calculate_discriminator, EventDiscriminator, EventHandler, InstructionDecoder,
+    SolanaIndexerConfigBuilder, SolanaIndexerError,
 };
 use solana_sdk::pubkey::Pubkey;
 use solana_transaction_status::{UiInstruction, UiParsedInstruction};
@@ -194,7 +194,7 @@ impl EventHandler<SplTransferEvent> for SplTransferHandler {
     async fn handle(
         &self,
         event: SplTransferEvent,
-        context: &solana_indexer::TxMetadata,
+        context: &solana_indexer_sdk::TxMetadata,
         db: &PgPool,
     ) -> Result<(), SolanaIndexerError> {
         let signature = &context.signature;
@@ -261,7 +261,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ============================================================================================
 
     // Create the indexer instance
-    let mut indexer = solana_indexer::SolanaIndexer::new(config).await?;
+    let mut indexer = solana_indexer_sdk::SolanaIndexer::new(config).await?;
 
     // Initialize database schema
     println!("📊 Initializing database schema...");

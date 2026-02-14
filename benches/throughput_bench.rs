@@ -1,5 +1,5 @@
 use serde_json::json;
-use solana_indexer::{SolanaIndexer, SolanaIndexerConfigBuilder, Storage, StorageBackend};
+use solana_indexer_sdk::{SolanaIndexer, SolanaIndexerConfigBuilder, Storage, StorageBackend};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

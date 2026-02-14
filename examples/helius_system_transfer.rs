@@ -8,7 +8,7 @@
 //! Set environment variables in `.env`:
 //! ```env
 //! HELIUS_API_KEY=your_api_key
-//! DATABASE_URL=postgresql://postgres:password@localhost/solana_indexer
+//! DATABASE_URL=postgresql://postgres:password@localhost/solana_indexer_sdk
 //! ```
 //!
 //! Run the example:
@@ -18,9 +18,9 @@
 
 use async_trait::async_trait;
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_indexer::{
-    EventDiscriminator, EventHandler, InstructionDecoder, SolanaIndexerConfigBuilder,
-    SolanaIndexerError, calculate_discriminator, config::HeliusNetwork,
+use solana_indexer_sdk::{
+    calculate_discriminator, config::HeliusNetwork, EventDiscriminator, EventHandler,
+    InstructionDecoder, SolanaIndexerConfigBuilder, SolanaIndexerError,
 };
 use solana_sdk::pubkey::Pubkey;
 use solana_transaction_status::{UiInstruction, UiParsedInstruction};
@@ -104,7 +104,7 @@ impl EventHandler<SystemTransferEvent> for SystemTransferHandler {
     async fn handle(
         &self,
         event: SystemTransferEvent,
-        context: &solana_indexer::TxMetadata,
+        context: &solana_indexer_sdk::TxMetadata,
         db: &PgPool,
     ) -> Result<(), SolanaIndexerError> {
         let signature = &context.signature;
@@ -174,7 +174,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .program_id(program_id)
         .build()?;
 
-    let mut indexer = solana_indexer::SolanaIndexer::new(config).await?;
+    let mut indexer = solana_indexer_sdk::SolanaIndexer::new(config).await?;
 
     // Initialize schema
     let handler = SystemTransferHandler;

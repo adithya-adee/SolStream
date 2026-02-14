@@ -1,4 +1,4 @@
-use solana_indexer::{Storage, StorageBackend};
+use solana_indexer_sdk::{Storage, StorageBackend};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::runtime::Runtime;

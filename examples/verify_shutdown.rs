@@ -1,4 +1,4 @@
-use solana_indexer::{SolanaIndexer, SolanaIndexerConfigBuilder};
+use solana_indexer_sdk::{SolanaIndexer, SolanaIndexerConfigBuilder};
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -10,7 +10,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create a configuration
     let config = SolanaIndexerConfigBuilder::new()
         .with_rpc("https://api.devnet.solana.com") // Use real endpoint or mock? Real for now
-        .with_database("postgresql://postgres:password@localhost:5432/solana_indexer") // Expect failure but fine for shutdown test
+        .with_database("postgresql://postgres:password@localhost:5432/solana_indexer_sdk") // Expect failure but fine for shutdown test
         .program_id("11111111111111111111111111111111")
         .with_stale_tentative_threshold(100)
         .build()?;

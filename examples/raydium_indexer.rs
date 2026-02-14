@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_indexer::{
-    EventDiscriminator, EventHandler, InstructionDecoder, SolanaIndexer,
-    SolanaIndexerConfigBuilder, SolanaIndexerError, calculate_discriminator,
+use solana_indexer_sdk::{
+    calculate_discriminator, EventDiscriminator, EventHandler, InstructionDecoder, SolanaIndexer,
+    SolanaIndexerConfigBuilder, SolanaIndexerError,
 };
 // use solana_sdk::pubkey::Pubkey;
 use solana_transaction_status::{UiInstruction, UiParsedInstruction};
@@ -80,7 +80,7 @@ impl EventHandler<RaydiumSwapEvent> for RaydiumSwapHandler {
     async fn handle(
         &self,
         event: RaydiumSwapEvent,
-        context: &solana_indexer::TxMetadata,
+        context: &solana_indexer_sdk::TxMetadata,
         _db: &PgPool,
     ) -> Result<(), SolanaIndexerError> {
         let signature = &context.signature;
@@ -106,7 +106,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // For this example to actually runs logic, it needs a DB.
     // We assume the user has a DB or will read the error.
     let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        "postgresql://postgres:password@localhost:5432/solana_indexer".to_string()
+        "postgresql://postgres:password@localhost:5432/solana_indexer_sdk".to_string()
     });
 
     let config = SolanaIndexerConfigBuilder::new()

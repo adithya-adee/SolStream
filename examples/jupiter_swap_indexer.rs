@@ -13,7 +13,7 @@
 //! Set environment variables in `.env`:
 //! ```env
 //! RPC_URL=https://api.mainnet-beta.solana.com  # Or a private RPC
-//! DATABASE_URL=postgresql://postgres:password@localhost/solana_indexer
+//! DATABASE_URL=postgresql://postgres:password@localhost/solana_indexer_sdk
 //! ```
 //!
 //! Run the example:
@@ -23,12 +23,12 @@
 
 use async_trait::async_trait;
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_indexer::config::IndexingMode;
-use solana_indexer::types::events::ParsedEvent;
-use solana_indexer::types::traits::LogDecoder;
-use solana_indexer::{
-    EventDiscriminator, EventHandler, SolanaIndexerConfigBuilder, SolanaIndexerError,
-    calculate_discriminator,
+use solana_indexer_sdk::config::IndexingMode;
+use solana_indexer_sdk::types::events::ParsedEvent;
+use solana_indexer_sdk::types::traits::LogDecoder;
+use solana_indexer_sdk::{
+    calculate_discriminator, EventDiscriminator, EventHandler, SolanaIndexerConfigBuilder,
+    SolanaIndexerError,
 };
 use sqlx::PgPool;
 
@@ -126,7 +126,7 @@ impl EventHandler<JupiterSwapEvent> for JupiterSwapHandler {
     async fn handle(
         &self,
         event: JupiterSwapEvent,
-        context: &solana_indexer::TxMetadata,
+        context: &solana_indexer_sdk::TxMetadata,
         db: &PgPool,
     ) -> Result<(), SolanaIndexerError> {
         let signature = &context.signature;
@@ -179,7 +179,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     config.indexing_mode = IndexingMode::logs();
 
     // Initialize indexer
-    let mut indexer = solana_indexer::SolanaIndexer::new(config).await?;
+    let mut indexer = solana_indexer_sdk::SolanaIndexer::new(config).await?;
 
     // Register custom components
     let handler = JupiterSwapHandler;

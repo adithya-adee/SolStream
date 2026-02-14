@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_indexer::{
-    EventDiscriminator, EventHandler, InstructionDecoder, SolanaIndexer,
-    SolanaIndexerConfigBuilder, SolanaIndexerError, Storage, calculate_discriminator,
+use solana_indexer_sdk::{
+    calculate_discriminator, EventDiscriminator, EventHandler, InstructionDecoder, SolanaIndexer,
+    SolanaIndexerConfigBuilder, SolanaIndexerError, Storage,
 };
 // use solana_sdk::pubkey::Pubkey;
 use solana_transaction_status::{UiInstruction, UiParsedInstruction};
@@ -59,7 +59,7 @@ impl EventHandler<SystemTransferEvent> for SystemTransferHandler {
     async fn handle(
         &self,
         event: SystemTransferEvent,
-        context: &solana_indexer::TxMetadata,
+        context: &solana_indexer_sdk::TxMetadata,
         _db: &PgPool,
     ) -> Result<(), SolanaIndexerError> {
         let signature = &context.signature;
@@ -125,7 +125,7 @@ impl EventHandler<MemoEvent> for MemoHandler {
     async fn handle(
         &self,
         event: MemoEvent,
-        context: &solana_indexer::TxMetadata,
+        context: &solana_indexer_sdk::TxMetadata,
         _db: &PgPool,
     ) -> Result<(), SolanaIndexerError> {
         let signature = &context.signature;
@@ -145,7 +145,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rpc_url = std::env::var("RPC_URL")
         .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
     let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        "postgresql://postgres:password@localhost:5432/solana_indexer".to_string()
+        "postgresql://postgres:password@localhost:5432/solana_indexer_sdk".to_string()
     });
 
     // 1. Create Shared Storage
@@ -162,10 +162,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_poll_interval(10)
         .with_batch_size(5) // Reduce batch size for public RPC
         .build()?; // Note: database_url in config is ignored if we use new_with_storage, but builder might require it?
-    // Builder requires .with_database() to be called?
-    // Let's check builder. It defaults storage related fields but database_url is optional?
-    // Builder struct has `database_url: Option<String>`. `build()` calls `unwrap()` on it?
-    // Let's check `src/config/mod.rs`.
+                   // Builder requires .with_database() to be called?
+                   // Let's check builder. It defaults storage related fields but database_url is optional?
+                   // Builder struct has `database_url: Option<String>`. `build()` calls `unwrap()` on it?
+                   // Let's check `src/config/mod.rs`.
 
     // 3. Configure Indexer 2 (Memo Program)
     let config_memo = SolanaIndexerConfigBuilder::new()

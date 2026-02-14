@@ -3,11 +3,24 @@
 repos:
   - repo: local
     hooks:
-      - id: cargo-fmt
-        name: cargo fmt
-        entry: cargo fmt --all --
+      - id: cargo-fmt-sdk
+        name: cargo fmt (sdk)
+        entry: cargo fmt --manifest-path solana-indexer-sdk/Cargo.toml --
         language: system
         types: [rust]
+        pass_filenames: false
+      - id: cargo-fmt-benches
+        name: cargo fmt (benches)
+        entry: cargo fmt --manifest-path benches/Cargo.toml --
+        language: system
+        types: [rust]
+        pass_filenames: false
+      - id: cargo-fmt-examples
+        name: cargo fmt (examples)
+        entry: cargo fmt --manifest-path examples/Cargo.toml --
+        language: system
+        types: [rust]
+        pass_filenames: false
       - id: cargo-clippy
         name: cargo clippy
         entry: cargo clippy

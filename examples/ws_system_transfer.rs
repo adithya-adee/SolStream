@@ -9,7 +9,7 @@
 //! ```env
 //! WS_URL=ws://127.0.0.1:8900
 //! RPC_URL=http://127.0.0.1:8899
-//! DATABASE_URL=postgresql://postgres:password@localhost/solana_indexer
+//! DATABASE_URL=postgresql://postgres:password@localhost/solana_indexer_sdk
 //! PROGRAM_ID=11111111111111111111111111111111  # System Program
 //! ```
 //!
@@ -20,9 +20,9 @@
 
 use async_trait::async_trait;
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_indexer::{
-    EventDiscriminator, EventHandler, InstructionDecoder, SolanaIndexer,
-    SolanaIndexerConfigBuilder, SolanaIndexerError, calculate_discriminator,
+use solana_indexer_sdk::{
+    calculate_discriminator, EventDiscriminator, EventHandler, InstructionDecoder, SolanaIndexer,
+    SolanaIndexerConfigBuilder, SolanaIndexerError,
 };
 use solana_sdk::pubkey::Pubkey;
 use solana_transaction_status::{UiInstruction, UiParsedInstruction};
@@ -110,7 +110,7 @@ impl EventHandler<SystemTransferEvent> for SystemTransferHandler {
     async fn handle(
         &self,
         event: SystemTransferEvent,
-        context: &solana_indexer::TxMetadata,
+        context: &solana_indexer_sdk::TxMetadata,
         db: &PgPool,
     ) -> Result<(), SolanaIndexerError> {
         let signature = &context.signature;

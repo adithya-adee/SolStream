@@ -4,9 +4,9 @@
 
 use async_trait::async_trait;
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_indexer::{
-    AccountDecoder, EventDiscriminator, Result, SchemaInitializer, SolanaIndexer,
-    SolanaIndexerConfigBuilder, config::IndexingMode, types::traits::EventHandler,
+use solana_indexer_sdk::{
+    config::IndexingMode, types::traits::EventHandler, AccountDecoder, EventDiscriminator, Result,
+    SchemaInitializer, SolanaIndexer, SolanaIndexerConfigBuilder,
 };
 use solana_sdk::account::Account;
 use sqlx::PgPool;
@@ -55,7 +55,7 @@ impl EventHandler<UserProfile> for UserProfileHandler {
     async fn handle(
         &self,
         event: UserProfile,
-        context: &solana_indexer::TxMetadata,
+        context: &solana_indexer_sdk::TxMetadata,
         db: &PgPool,
     ) -> Result<()> {
         let signature = &context.signature;
@@ -71,7 +71,7 @@ impl EventHandler<UserProfile> for UserProfileHandler {
             .bind(signature)
             .execute(db)
             .await
-            .map_err(solana_indexer::utils::error::SolanaIndexerError::DatabaseError)?;
+            .map_err(solana_indexer_sdk::utils::error::SolanaIndexerError::DatabaseError)?;
 
         Ok(())
     }
