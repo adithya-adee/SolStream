@@ -157,13 +157,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   Database: {}", database_url);
     println!("   Program: {}\n", program_id);
     println!("ℹ️  Note: Helius Free Tier has rate limits (e.g. 10 TPS).");
-    println!("    If you encounter 429 errors, consider upgrading or implementing a retry queue.");
+    println!("    Using conservative polling intervals to avoid 429 errors.");
 
     // Default to WebSocket enabled (true). Pass false to use RPC polling only.
     let use_websocket = false;
 
+    // Set polling interval based on network and tier
+    // Devnet: More conservative (10s) due to lower limits
+    // Mainnet: Moderate (5s) for free tier
+    let poll_interval = match network {
+        HeliusNetwork::Devnet => 10,
+        HeliusNetwork::Mainnet => 5,
+    };
+
     if !use_websocket {
         println!("ℹ️  Mode: RPC Polling Only (WebSocket disabled)");
+        println!(
+            "   Poll Interval: {}s (conservative for rate limits)",
+            poll_interval
+        );
     } else {
         println!("ℹ️  Mode: WebSocket + RPC (Default)");
     }
@@ -172,6 +184,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_helius_network(api_key, network, use_websocket)
         .with_database(database_url.clone())
         .program_id(program_id)
+        .with_poll_interval(poll_interval)
+        .with_batch_size(3) // Small batch size to avoid overwhelming rate limits
         .build()?;
 
     let mut indexer = solana_indexer_sdk::SolanaIndexer::new(config).await?;

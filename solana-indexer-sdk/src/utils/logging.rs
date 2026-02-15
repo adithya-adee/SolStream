@@ -68,11 +68,32 @@ pub fn log_startup(program_id: &str, rpc_url: &str, poll_interval: u64) {
     if std::env::var("SOLANA_INDEXER_SILENT").is_ok() {
         return;
     }
+
+    // Sanitize RPC URL to hide API keys
+    let sanitized_url = if rpc_url.contains("api-key=") {
+        // Find the api-key parameter and replace its value
+        if let Some(pos) = rpc_url.find("api-key=") {
+            let before = &rpc_url[..pos + 8]; // Include "api-key="
+            let after = &rpc_url[pos + 8..];
+            // Find the end of the API key (next & or end of string)
+            let end_pos = after.find('&').unwrap_or(after.len());
+            format!("{}[REDACTED]{}", before, &after[end_pos..])
+        } else {
+            rpc_url.to_string()
+        }
+    } else {
+        rpc_url.to_string()
+    };
+
     println!("\n{}", "═".repeat(80).bright_blue());
     println!("{}", "  Solana Indexer".bright_cyan().bold());
     println!("{}", "═".repeat(80).bright_blue());
     println!("  {} {}", "Program ID:".bright_white(), program_id.cyan());
-    println!("  {} {}", "RPC URL:   ".bright_white(), rpc_url.cyan());
+    println!(
+        "  {} {}",
+        "RPC URL:   ".bright_white(),
+        sanitized_url.cyan()
+    );
     println!(
         "  {} {}s",
         "Poll Interval:".bright_white(),
