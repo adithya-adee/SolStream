@@ -190,16 +190,9 @@ async fn test_handler_integration_with_database(
     let mut indexer = SolanaIndexer::new_with_storage(config, storage.clone());
     let token = indexer.cancellation_token();
 
-    // Register decoder for System Program (both name and ID)
-    indexer.decoder_registry_mut()?.register(
-        "system".to_string(),
-        Box::new(Box::new(TestTransferDecoder) as Box<dyn InstructionDecoder<TransferEvent>>),
-    )?;
-
-    indexer.decoder_registry_mut()?.register(
-        "11111111111111111111111111111111".to_string(),
-        Box::new(Box::new(TestTransferDecoder) as Box<dyn InstructionDecoder<TransferEvent>>),
-    )?;
+    // Register decoder for System Program, which will automatically enable `indexing_mode.inputs`
+    indexer.register_decoder("system", TestTransferDecoder)?;
+    indexer.register_decoder("11111111111111111111111111111111", TestTransferDecoder)?;
 
     let handler: Box<dyn EventHandler<TransferEvent>> = Box::new(TestTransferHandler);
     indexer

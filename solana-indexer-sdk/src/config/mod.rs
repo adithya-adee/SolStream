@@ -190,7 +190,7 @@ pub enum HeliusNetwork {
 ///
 /// Configures which types of data the indexer should process.
 /// Supports multi-selection of options.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct IndexingMode {
     /// Index based on instruction data (Inputs).
     pub inputs: bool,
@@ -198,16 +198,6 @@ pub struct IndexingMode {
     pub logs: bool,
     /// Index accounts.
     pub accounts: bool,
-}
-
-impl Default for IndexingMode {
-    fn default() -> Self {
-        Self {
-            inputs: true,
-            logs: false,
-            accounts: false,
-        }
-    }
 }
 
 impl IndexingMode {
@@ -263,13 +253,13 @@ pub enum StartStrategy {
 /// Configuration for backfill operations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackfillConfig {
-    /// Enable backfill mode
+    /// Enable backfill mode (runs alongside live indexer)
     pub enabled: bool,
 
     /// Start slot for backfill (None = from genesis/earliest)
     pub start_slot: Option<u64>,
 
-    /// End slot for backfill (None = to latest)
+    /// End slot for backfill (None = to latest finalized)
     pub end_slot: Option<u64>,
 
     /// Batch size for signature fetching
@@ -283,6 +273,17 @@ pub struct BackfillConfig {
 
     /// Interval for checking finalized blocks (in slots)
     pub finalization_check_interval: u64,
+
+    /// How often BackfillManager checks for new ranges to backfill (in seconds)
+    pub poll_interval_secs: u64,
+
+    /// Maximum depth to backfill (slots behind latest finalized)
+    /// If None, backfills all available history
+    pub max_depth: Option<u64>,
+
+    /// Desired lag threshold - only backfill if lag exceeds this many slots
+    /// If None, backfills whenever there's any lag
+    pub desired_lag_slots: Option<u64>,
 }
 
 impl Default for BackfillConfig {
@@ -295,6 +296,9 @@ impl Default for BackfillConfig {
             concurrency: 50,
             enable_reorg_handling: true,
             finalization_check_interval: 32,
+            poll_interval_secs: 5,
+            max_depth: None,
+            desired_lag_slots: Some(1000), // Default: backfill if lag > 1000 slots
         }
     }
 }
@@ -330,7 +334,6 @@ pub struct SolanaIndexerConfigBuilder {
     poll_interval_secs: Option<u64>,
     batch_size: Option<usize>,
     source: Option<SourceConfig>,
-    indexing_mode: Option<IndexingMode>,
     start_strategy: Option<StartStrategy>,
     backfill: Option<BackfillConfig>,
     registry: Option<RegistryConfig>,
@@ -604,17 +607,6 @@ impl SolanaIndexerConfigBuilder {
         self
     }
 
-    /// Sets the indexing mode.
-    ///
-    /// # Arguments
-    ///
-    /// * `mode` - The indexing mode configuration
-    #[must_use]
-    pub fn with_indexing_mode(mut self, mode: IndexingMode) -> Self {
-        self.indexing_mode = Some(mode);
-        self
-    }
-
     /// Sets the backfill configuration.
     #[must_use]
     pub fn with_backfill(mut self, config: BackfillConfig) -> Self {
@@ -747,7 +739,7 @@ impl SolanaIndexerConfigBuilder {
             poll_interval_secs,
             batch_size,
             source,
-            indexing_mode: self.indexing_mode.unwrap_or_default(),
+            indexing_mode: IndexingMode::default(),
             start_strategy: self.start_strategy.unwrap_or_default(),
             backfill: self.backfill.unwrap_or_default(),
             registry: self.registry.unwrap_or_default(),

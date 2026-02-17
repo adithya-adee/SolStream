@@ -425,6 +425,9 @@ async fn test_indexer_backfill() {
         concurrency: 1,
         enable_reorg_handling: false, // simpler test
         finalization_check_interval: 1,
+        poll_interval_secs: 1,
+        max_depth: None,
+        desired_lag_slots: None,
     };
 
     let config = SolanaIndexerConfigBuilder::new()

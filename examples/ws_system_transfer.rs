@@ -1,37 +1,18 @@
 //! System Transfer Indexer Example (WebSocket)
 //!
-//! This example demonstrates real-time indexing of System Program transfers using WebSocket.
-//! It's identical to `system_transfer_indexer.rs` but uses WebSocket instead of polling.
-//!
-//! ## Usage
-//!
-//! Set environment variables in `.env`:
-//! ```env
-//! WS_URL=ws://127.0.0.1:8900
-//! RPC_URL=http://127.0.0.1:8899
-//! DATABASE_URL=postgresql://postgres:password@localhost/solana_indexer_sdk
-//! PROGRAM_ID=11111111111111111111111111111111  # System Program
-//! ```
-//!
-//! Run the example:
-//! ```bash
-//! cargo run --example system_transfer_indexer_ws
-//! ```
+//! This example demonstrates real-time indexing of System Program transfers using a WebSocket connection.
 
 use async_trait::async_trait;
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_indexer_sdk::{
-    calculate_discriminator, EventDiscriminator, EventHandler, InstructionDecoder, SolanaIndexer,
-    SolanaIndexerConfigBuilder, SolanaIndexerError,
+    calculate_discriminator, config::BackfillConfig, EventDiscriminator, EventHandler,
+    InstructionDecoder, SolanaIndexer, SolanaIndexerConfigBuilder, SolanaIndexerError,
 };
 use solana_sdk::pubkey::Pubkey;
 use solana_transaction_status::{UiInstruction, UiParsedInstruction};
 use sqlx::PgPool;
 
-// ================================================================================================
-// Event Definition
-// ================================================================================================
-
+// 1. Define Event, Decoder, and Handler
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
 pub struct SystemTransferEvent {
     pub from: Pubkey,
@@ -45,65 +26,37 @@ impl EventDiscriminator for SystemTransferEvent {
     }
 }
 
-// ================================================================================================
-// Instruction Decoder
-// ================================================================================================
-
 pub struct SystemTransferDecoder;
-
 impl InstructionDecoder<SystemTransferEvent> for SystemTransferDecoder {
     fn decode(&self, instruction: &UiInstruction) -> Option<SystemTransferEvent> {
-        match instruction {
-            UiInstruction::Parsed(UiParsedInstruction::Parsed(parsed)) => {
-                if parsed.program != "system" {
-                    return None;
-                }
-
-                let parsed_info = parsed.parsed.as_object()?;
-                let instruction_type = parsed_info.get("type")?.as_str()?;
-
-                if instruction_type != "transfer" {
-                    return None;
-                }
-
-                let info = parsed_info.get("info")?.as_object()?;
-                let source = info.get("source")?.as_str()?;
-                let destination = info.get("destination")?.as_str()?;
-                let lamports = info.get("lamports")?.as_u64()?;
-
-                Some(SystemTransferEvent {
-                    from: source.parse().ok()?,
-                    to: destination.parse().ok()?,
-                    amount: lamports,
-                })
+        if let UiInstruction::Parsed(UiParsedInstruction::Parsed(parsed)) = instruction {
+            if parsed.program == "system" && parsed.parsed.get("type")?.as_str()? == "transfer" {
+                let info = parsed.parsed.get("info")?.as_object()?;
+                return Some(SystemTransferEvent {
+                    from: info.get("source")?.as_str()?.parse().ok()?,
+                    to: info.get("destination")?.as_str()?.parse().ok()?,
+                    amount: info.get("lamports")?.as_u64()?,
+                });
             }
-            _ => None,
         }
+        None
     }
 }
 
-// ================================================================================================
-// Event Handler
-// ================================================================================================
-
 pub struct SystemTransferHandler;
-
 #[async_trait]
 impl EventHandler<SystemTransferEvent> for SystemTransferHandler {
     async fn initialize_schema(&self, db: &PgPool) -> Result<(), SolanaIndexerError> {
         sqlx::query(
-            "CREATE TABLE IF NOT EXISTS system_transfers (
+            "CREATE TABLE IF NOT EXISTS ws_system_transfers (
                 signature TEXT PRIMARY KEY,
                 from_wallet TEXT NOT NULL,
                 to_wallet TEXT NOT NULL,
-                amount_lamports BIGINT NOT NULL,
-                amount_sol DECIMAL(20, 9) GENERATED ALWAYS AS (amount_lamports / 1000000000.0) STORED,
-                indexed_at TIMESTAMPTZ DEFAULT NOW()
+                amount_lamports BIGINT NOT NULL
             )",
         )
         .execute(db)
         .await?;
-
         Ok(())
     }
 
@@ -113,93 +66,58 @@ impl EventHandler<SystemTransferEvent> for SystemTransferHandler {
         context: &solana_indexer_sdk::TxMetadata,
         db: &PgPool,
     ) -> Result<(), SolanaIndexerError> {
-        let signature = &context.signature;
-        let sol_amount = event.amount as f64 / 1_000_000_000.0;
-
         println!(
-            "📝 SOL Transfer: {} → {} ({:.9} SOL / {} lamports) [{}]",
-            event.from, event.to, sol_amount, event.amount, signature
+            "⚡ WS Transfer: {} -> {} ({} lamports)",
+            event.from, event.to, event.amount
         );
-
         sqlx::query(
-            "INSERT INTO system_transfers (signature, from_wallet, to_wallet, amount_lamports)
-             VALUES ($1, $2, $3, $4)
-             ON CONFLICT (signature) DO NOTHING",
+            "INSERT INTO ws_system_transfers (signature, from_wallet, to_wallet, amount_lamports)
+             VALUES ($1, $2, $3, $4) ON CONFLICT (signature) DO NOTHING",
         )
-        .bind(signature)
+        .bind(&context.signature)
         .bind(event.from.to_string())
         .bind(event.to.to_string())
         .bind(event.amount as i64)
         .execute(db)
         .await?;
-
         Ok(())
     }
 }
 
-// ================================================================================================
-// Main Application
-// ================================================================================================
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
+    println!("🚀 System Transfer Indexer (WebSocket) starting...");
 
-    println!("🚀 System Transfer Indexer (WebSocket)\n");
-
-    // ============================================================================================
-    // Configuration
-    // ============================================================================================
-
-    let ws_url = std::env::var("WS_URL")?;
-    let rpc_url = std::env::var("RPC_URL")?;
+    let ws_url = "wss://api.devnet.solana.com";
+    let rpc_url = "https://api.devnet.solana.com";
     let database_url = std::env::var("DATABASE_URL")?;
-    let program_id = std::env::var("PROGRAM_ID")
-        .unwrap_or_else(|_| "11111111111111111111111111111111".to_string());
+    let program_id = "11111111111111111111111111111111";
 
-    println!("📋 Configuration:");
-    println!("   WebSocket URL: {}", ws_url);
-    println!("   RPC URL: {}", rpc_url);
-    println!("   Database: {}", database_url);
-    println!("   Program ID: {}\n", program_id);
-
-    // ============================================================================================
-    // Create Indexer
-    // ============================================================================================
-
+    // 2. Build the indexer configuration.
     let config = SolanaIndexerConfigBuilder::new()
         .with_ws(ws_url, rpc_url)
-        .with_database(database_url)
-        .program_id(&program_id)
+        .with_database(database_url.clone())
+        .program_id(program_id)
+        .with_backfill(BackfillConfig {
+            enabled: true,
+            ..Default::default()
+        })
         .build()?;
 
     let mut indexer = SolanaIndexer::new(config).await?;
 
-    // ============================================================================================
-    // Register Decoder
-    // ============================================================================================
+    // 3. Register components.
+    let handler = SystemTransferHandler;
+    handler
+        .initialize_schema(&sqlx::PgPool::connect(&database_url).await?)
+        .await?;
+    indexer.register_decoder("system", SystemTransferDecoder)?;
+    indexer.register_handler(handler)?;
 
-    indexer.decoder_registry_mut()?.register(
-        "system".to_string(),
-        Box::new(
-            Box::new(SystemTransferDecoder) as Box<dyn InstructionDecoder<SystemTransferEvent>>
-        ),
-    )?;
+    println!("✅ Setup complete. Starting WebSocket indexer...");
 
-    // ============================================================================================
-    // Register Handler
-    // ============================================================================================
-
-    let handler: Box<dyn EventHandler<SystemTransferEvent>> = Box::new(SystemTransferHandler);
-    indexer
-        .handler_registry_mut()?
-        .register(SystemTransferEvent::discriminator(), Box::new(handler))?;
-
-    // ============================================================================================
-    // Start Indexing
-    // ============================================================================================
-
-    println!("🔄 Starting real-time indexer with WebSocket...\n");
+    // 4. Start the indexer.
     indexer.start().await?;
 
     Ok(())

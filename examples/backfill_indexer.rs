@@ -1,89 +1,140 @@
-//! Backfill Indexer Example
+//! Dynamic Backfill Indexer Example
 //!
-//! This example demonstrates how to configure and run the backfill engine to index
-//! historical data. It showcases:
+//! This example demonstrates how the SDK automatically backfills historical data
+//! while simultaneously processing live transactions.
 //!
-//! 1. **Backfill Configuration**: Setting slot ranges and concurrency.
-//! 2. **Reorg Handling**: Enabling automatic reorg detection and recovery.
-//! 3. **Progress Tracking**: Resuming from saved checkpoints.
-//!
-//! ## Usage
-//!
-//! ```bash
-//! RPC_URL=https://api.mainnet-beta.solana.com \
-//! DATABASE_URL=postgres://... \
-//! PROGRAM_ID=... \
-//! cargo run --example backfill_indexer
-//! ```
-use solana_indexer_sdk::config::BackfillConfig;
-use solana_indexer_sdk::{SolanaIndexer, SolanaIndexerConfigBuilder};
-use std::env;
+//! 1. **Dynamic Configuration**: Backfill is enabled without hardcoded slot ranges.
+//! 2. **Automatic Operation**: A single `indexer.start()` call manages both live indexing
+//!    and the background backfill process.
+//! 3. **Complete Example**: A functional System Program transfer indexer is used to
+//!    provide a real-world demonstration.
+
+use async_trait::async_trait;
+use borsh::{BorshDeserialize, BorshSerialize};
+use solana_indexer_sdk::{
+    calculate_discriminator,
+    config::{BackfillConfig, StartStrategy},
+    EventDiscriminator, EventHandler, InstructionDecoder, SolanaIndexer,
+    SolanaIndexerConfigBuilder, SolanaIndexerError, TxMetadata,
+};
+use solana_sdk::pubkey::Pubkey;
+use solana_transaction_status::{UiInstruction, UiParsedInstruction};
+use sqlx::PgPool;
+
+// 1. Define the event, decoder, and handler.
+#[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
+pub struct SystemTransferEvent {
+    pub from: Pubkey,
+    pub to: Pubkey,
+    pub amount: u64,
+}
+
+impl EventDiscriminator for SystemTransferEvent {
+    fn discriminator() -> [u8; 8] {
+        calculate_discriminator("SystemTransferEvent")
+    }
+}
+
+pub struct SystemTransferDecoder;
+impl InstructionDecoder<SystemTransferEvent> for SystemTransferDecoder {
+    fn decode(&self, instruction: &UiInstruction) -> Option<SystemTransferEvent> {
+        if let UiInstruction::Parsed(UiParsedInstruction::Parsed(parsed)) = instruction {
+            if parsed.program == "system" && parsed.parsed.get("type")?.as_str()? == "transfer" {
+                let info = parsed.parsed.get("info")?.as_object()?;
+                return Some(SystemTransferEvent {
+                    from: info.get("source")?.as_str()?.parse().ok()?,
+                    to: info.get("destination")?.as_str()?.parse().ok()?,
+                    amount: info.get("lamports")?.as_u64()?,
+                });
+            }
+        }
+        None
+    }
+}
+
+pub struct SystemTransferHandler;
+#[async_trait]
+impl EventHandler<SystemTransferEvent> for SystemTransferHandler {
+    async fn initialize_schema(&self, db: &PgPool) -> Result<(), SolanaIndexerError> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS backfill_transfers (
+                signature TEXT PRIMARY KEY,
+                from_wallet TEXT NOT NULL,
+                to_wallet TEXT NOT NULL,
+                amount_lamports BIGINT NOT NULL
+            )",
+        )
+        .execute(db)
+        .await?;
+        Ok(())
+    }
+
+    async fn handle(
+        &self,
+        event: SystemTransferEvent,
+        context: &TxMetadata,
+        db: &PgPool,
+    ) -> Result<(), SolanaIndexerError> {
+        sqlx::query(
+            "INSERT INTO backfill_transfers (signature, from_wallet, to_wallet, amount_lamports)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (signature) DO NOTHING",
+        )
+        .bind(&context.signature)
+        .bind(event.from.to_string())
+        .bind(event.to.to_string())
+        .bind(event.amount as i64)
+        .execute(db)
+        .await?;
+        Ok(())
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Load environment variables
     dotenvy::dotenv().ok();
+    println!("🚀 Starting Indexer with Dynamic Backfill...");
 
-    // Default configuration from env
-    let rpc_url =
-        env::var("RPC_URL").unwrap_or_else(|_| "https://api.devnet.solana.com".to_string());
-    let db_url = env::var("DATABASE_URL")?;
-    let program_id = env::var("PROGRAM_ID")?;
+    let rpc_url = "https://api.devnet.solana.com".to_string();
+    let database_url = std::env::var("DATABASE_URL")?;
+    let program_id = "11111111111111111111111111111111";
 
-    // Configure backfill settings
+    // 2. Configure dynamic backfill.
+    // The indexer will automatically backfill if it is more than 1000 slots behind
+    // the chain tip, checking for new ranges to fill every 10 seconds.
     let backfill_config = BackfillConfig {
         enabled: true,
-        // Start from a specific slot (set to None to start from the earliest available or 0).
-        // If resumption is enabled, this will be overridden by the last saved progress if it's higher.
-        start_slot: Some(250_000_000),
-
-        // End at a specific slot (set to None to continue until the latest finalized block).
-        end_slot: Some(250_001_000),
-
-        // Number of transactions to fetch per batch.
-        batch_size: 10,
-
-        // Number of concurrent RPC requests. Adjust based on your RPC provider's rate limits.
-        concurrency: 5,
-
-        // Enable reorg handling to detect and rollback invalidated blocks.
-        enable_reorg_handling: true,
-
-        // Interval (in slots) to check for block finalization updates.
-        finalization_check_interval: 100,
+        poll_interval_secs: 10,
+        desired_lag_slots: Some(1000),
+        ..Default::default()
     };
 
-    println!("Configuring backfill indexer for program: {}", program_id);
-    println!(
-        "Backfill range: {:?} to {:?}",
-        backfill_config.start_slot, backfill_config.end_slot
-    );
-
+    // 3. Build the main indexer configuration.
     let config = SolanaIndexerConfigBuilder::new()
         .with_rpc(rpc_url)
-        .with_database(db_url)
+        .with_database(database_url.clone())
         .program_id(program_id)
+        .with_start_strategy(StartStrategy::Resume)
         .with_backfill(backfill_config)
         .build()?;
 
-    // Create indexer
-    let indexer = SolanaIndexer::new(config).await?;
+    let mut indexer = SolanaIndexer::new(config).await?;
 
-    // Initialize database
-    indexer.storage().initialize().await?;
+    // 4. Register components and initialize schema.
+    let handler = SystemTransferHandler;
+    handler
+        .initialize_schema(&sqlx::PgPool::connect(&database_url).await?)
+        .await?;
 
-    // Start backfill process
-    println!("Starting backfill...");
-    if let Err(e) = indexer.start_backfill().await {
-        eprintln!("Backfill failed: {}", e);
-        // Depending on strategy, you might want to exit or continue to real-time indexing
-    } else {
-        println!("Backfill completed successfully!");
-    }
+    indexer.register_decoder("system", SystemTransferDecoder)?;
+    indexer.register_handler(handler)?;
 
-    // Start real-time indexing
-    // println!("Starting real-time indexing...");
-    // indexer.start().await?;
+    println!("✅ Setup complete. Starting indexer.");
+    println!("   The indexer will process live data and run backfill in the background.");
+    println!("   Press Ctrl+C to stop.");
+
+    // 5. Start the indexer.
+    indexer.start().await?;
 
     Ok(())
 }

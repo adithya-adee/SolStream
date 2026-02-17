@@ -9,6 +9,7 @@ use crate::types::metadata::TxMetadata;
 use crate::utils::error::{Result, SolanaIndexerError};
 use async_trait::async_trait;
 use borsh::{BorshDeserialize, BorshSerialize};
+use solana_sdk::pubkey::Pubkey;
 use solana_transaction_status::UiInstruction;
 use sqlx::PgPool;
 
@@ -118,12 +119,13 @@ pub trait AccountDecoder<T>: Send + Sync {
     /// Decodes a Solana account into a typed structure.
     ///
     /// # Arguments
-    /// * `account` - The raw account data
+    /// * `pubkey` - The public key of the account being decoded.
+    /// * `account` - The raw account data.
     ///
     /// # Returns
-    /// * `Some(T)` - Successfully decoded type
-    /// * `None` - Data doesn't match or failed to decode
-    fn decode(&self, account: &solana_sdk::account::Account) -> Option<T>;
+    /// * `Some(T)` - Successfully decoded type.
+    /// * `None` - Data doesn't match or failed to decode.
+    fn decode(&self, pubkey: &Pubkey, account: &solana_sdk::account::Account) -> Option<T>;
 }
 
 /// Type-erased account decoder for internal SDK use.
@@ -132,6 +134,7 @@ pub trait DynamicAccountDecoder: Send + Sync {
     /// Decodes an account into discriminator + raw data.
     fn decode_account_dynamic(
         &self,
+        pubkey: &Pubkey,
         account: &solana_sdk::account::Account,
     ) -> Option<([u8; 8], Vec<u8>)>;
 }
@@ -142,9 +145,10 @@ where
 {
     fn decode_account_dynamic(
         &self,
+        pubkey: &Pubkey,
         account: &solana_sdk::account::Account,
     ) -> Option<([u8; 8], Vec<u8>)> {
-        let event = self.decode(account)?;
+        let event = self.decode(pubkey, account)?;
         let discriminator = T::discriminator();
         let data = borsh::to_vec(&event).ok()?;
         Some((discriminator, data))

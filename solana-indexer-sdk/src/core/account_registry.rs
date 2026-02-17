@@ -52,13 +52,14 @@ impl AccountDecoderRegistry {
     /// However, following the pattern of `DecoderRegistry`, we return a list of matches.
     pub fn decode_account(
         &self,
+        pubkey: &solana_sdk::pubkey::Pubkey,
         account: &solana_sdk::account::Account,
     ) -> Vec<([u8; 8], Vec<u8>)> {
         self.metrics.inc_calls();
         let results: Vec<_> = self
             .decoders
             .iter()
-            .filter_map(|decoder| decoder.decode_account_dynamic(account))
+            .filter_map(|decoder| decoder.decode_account_dynamic(pubkey, account))
             .collect();
 
         if !results.is_empty() {
@@ -87,6 +88,7 @@ mod tests {
     use crate::types::traits::AccountDecoder;
     use borsh::{BorshDeserialize, BorshSerialize};
     use solana_sdk::account::Account;
+    use solana_sdk::pubkey::Pubkey;
 
     #[derive(BorshSerialize, BorshDeserialize, Debug, Clone, PartialEq)]
     struct TestAccount {
@@ -102,7 +104,7 @@ mod tests {
     struct TestDecoder;
 
     impl AccountDecoder<TestAccount> for TestDecoder {
-        fn decode(&self, account: &Account) -> Option<TestAccount> {
+        fn decode(&self, _pubkey: &Pubkey, account: &Account) -> Option<TestAccount> {
             if account.data.len() >= 8 {
                 TestAccount::try_from_slice(&account.data).ok()
             } else {
@@ -125,8 +127,9 @@ mod tests {
             executable: false,
             rent_epoch: 0,
         };
+        let dummy_pubkey = Pubkey::new_unique();
 
-        let decoded = registry.decode_account(&account);
+        let decoded = registry.decode_account(&dummy_pubkey, &account);
         assert_eq!(decoded.len(), 1);
         let (discriminator, data) = &decoded[0];
         assert_eq!(*discriminator, TestAccount::discriminator());
@@ -141,7 +144,8 @@ mod tests {
     fn test_decode_empty() {
         let registry = AccountDecoderRegistry::new();
         let account = Account::default();
-        let decoded = registry.decode_account(&account);
+        let dummy_pubkey = Pubkey::new_unique();
+        let decoded = registry.decode_account(&dummy_pubkey, &account);
         assert!(decoded.is_empty());
     }
 }

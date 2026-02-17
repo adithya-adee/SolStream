@@ -21,7 +21,7 @@ impl EventDiscriminator for MockUserAccount {
 struct MockUserAccountDecoder;
 
 impl AccountDecoder<MockUserAccount> for MockUserAccountDecoder {
-    fn decode(&self, account: &Account) -> Option<MockUserAccount> {
+    fn decode(&self, _pubkey: &Pubkey, account: &Account) -> Option<MockUserAccount> {
         if account.data.len() < 8 {
             return None;
         }
@@ -58,9 +58,10 @@ fn test_account_registry_workflow() {
         executable: false,
         rent_epoch: 0,
     };
+    let dummy_pubkey = Pubkey::new_unique();
 
     // Decode
-    let results = registry.decode_account(&account);
+    let results = registry.decode_account(&dummy_pubkey, &account);
     assert_eq!(results.len(), 1);
 
     let (disc, data) = &results[0];
@@ -93,7 +94,8 @@ fn test_account_registry_invalid_data() {
         executable: false,
         rent_epoch: 0,
     };
+    let dummy_pubkey = Pubkey::new_unique();
 
-    let results = registry.decode_account(&account);
+    let results = registry.decode_account(&dummy_pubkey, &account);
     assert!(results.is_empty());
 }

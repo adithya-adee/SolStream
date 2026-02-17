@@ -1,7 +1,7 @@
 //! Helius System Transfer Indexer Example
 //!
-//! This example limits the `rpc_system_transfer.rs` example but uses Helius
-//! as the high-performance data source.
+//! This example demonstrates how to use Helius as a high-performance data source
+//! for indexing System Program transfers.
 //!
 //! ## Usage
 //!
@@ -10,26 +10,20 @@
 //! HELIUS_API_KEY=your_api_key
 //! DATABASE_URL=postgresql://postgres:password@localhost/solana_indexer_sdk
 //! ```
-//!
-//! Run the example:
-//! ```bash
-//! cargo run --example helius_system_transfer
-//! ```
 
 use async_trait::async_trait;
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_indexer_sdk::{
-    calculate_discriminator, config::HeliusNetwork, EventDiscriminator, EventHandler,
-    InstructionDecoder, SolanaIndexerConfigBuilder, SolanaIndexerError,
+    calculate_discriminator,
+    config::{BackfillConfig, HeliusNetwork},
+    EventDiscriminator, EventHandler, InstructionDecoder, SolanaIndexerConfigBuilder,
+    SolanaIndexerError,
 };
 use solana_sdk::pubkey::Pubkey;
 use solana_transaction_status::{UiInstruction, UiParsedInstruction};
 use sqlx::PgPool;
 
-// ================================================================================================
-// Event Definition (Same as rpc_system_transfer.rs)
-// ================================================================================================
-
+// 1. Define Event, Decoder, and Handler (identical to other system_transfer examples)
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
 pub struct SystemTransferEvent {
     pub from: Pubkey,
@@ -43,46 +37,27 @@ impl EventDiscriminator for SystemTransferEvent {
     }
 }
 
-// ================================================================================================
-// Instruction Decoder (Same as rpc_system_transfer.rs)
-// ================================================================================================
-
 pub struct SystemTransferDecoder;
-
 impl InstructionDecoder<SystemTransferEvent> for SystemTransferDecoder {
     fn decode(&self, instruction: &UiInstruction) -> Option<SystemTransferEvent> {
-        match instruction {
-            UiInstruction::Parsed(UiParsedInstruction::Parsed(parsed)) => {
-                if parsed.program != "system" {
-                    return None;
-                }
-                let parsed_info = parsed.parsed.as_object()?;
-                let instruction_type = parsed_info.get("type")?.as_str()?;
-                if instruction_type != "transfer" {
-                    return None;
-                }
-                let info = parsed_info.get("info")?.as_object()?;
-                let source = info.get("source")?.as_str()?;
-                let destination = info.get("destination")?.as_str()?;
-                let lamports = info.get("lamports")?.as_u64()?;
-
+        if let UiInstruction::Parsed(UiParsedInstruction::Parsed(parsed)) = instruction {
+            if parsed.program == "system" && parsed.parsed.get("type")?.as_str()? == "transfer" {
+                let info = parsed.parsed.get("info")?.as_object()?;
                 Some(SystemTransferEvent {
-                    from: source.parse().ok()?,
-                    to: destination.parse().ok()?,
-                    amount: lamports,
+                    from: info.get("source")?.as_str()?.parse().ok()?,
+                    to: info.get("destination")?.as_str()?.parse().ok()?,
+                    amount: info.get("lamports")?.as_u64()?,
                 })
+            } else {
+                None
             }
-            _ => None,
+        } else {
+            None
         }
     }
 }
 
-// ================================================================================================
-// Event Handler (Same as rpc_system_transfer.rs)
-// ================================================================================================
-
 pub struct SystemTransferHandler;
-
 #[async_trait]
 impl EventHandler<SystemTransferEvent> for SystemTransferHandler {
     async fn initialize_schema(&self, db: &PgPool) -> Result<(), SolanaIndexerError> {
@@ -91,9 +66,7 @@ impl EventHandler<SystemTransferEvent> for SystemTransferHandler {
                 signature TEXT PRIMARY KEY,
                 from_wallet TEXT NOT NULL,
                 to_wallet TEXT NOT NULL,
-                amount_lamports BIGINT NOT NULL,
-                amount_sol DECIMAL(20, 9) GENERATED ALWAYS AS (amount_lamports / 1000000000.0) STORED,
-                indexed_at TIMESTAMPTZ DEFAULT NOW()
+                amount_lamports BIGINT NOT NULL
             )",
         )
         .execute(db)
@@ -107,11 +80,9 @@ impl EventHandler<SystemTransferEvent> for SystemTransferHandler {
         context: &solana_indexer_sdk::TxMetadata,
         db: &PgPool,
     ) -> Result<(), SolanaIndexerError> {
-        let signature = &context.signature;
-        let sol_amount = event.amount as f64 / 1_000_000_000.0;
         println!(
-            "⚡ Helius Transfer: {} → {} ({:.9} SOL) [{}]",
-            event.from, event.to, sol_amount, signature
+            "⚡ Helius Transfer: {} -> {} ({} lamports)",
+            event.from, event.to, event.amount
         );
 
         sqlx::query(
@@ -119,119 +90,57 @@ impl EventHandler<SystemTransferEvent> for SystemTransferHandler {
              VALUES ($1, $2, $3, $4)
              ON CONFLICT (signature) DO NOTHING",
         )
-        .bind(signature)
+        .bind(&context.signature)
         .bind(event.from.to_string())
         .bind(event.to.to_string())
         .bind(event.amount as i64)
         .execute(db)
         .await?;
-
         Ok(())
     }
 }
 
-// ================================================================================================
-// Main Application
-// ================================================================================================
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
-
-    println!("🚀 Helius System Transfer Indexer\n");
+    println!("🚀 Helius System Transfer Indexer starting...");
 
     let api_key = std::env::var("HELIUS_API_KEY")?;
     let database_url = std::env::var("DATABASE_URL")?;
-    let program_id = std::env::var("PROGRAM_ID")
-        .unwrap_or_else(|_| "11111111111111111111111111111111".to_string());
+    let program_id = "11111111111111111111111111111111";
 
-    let network_str = std::env::var("HELIUS_NETWORK").unwrap_or_else(|_| "mainnet".to_string());
-    let network = match network_str.to_lowercase().as_str() {
-        "mainnet" => HeliusNetwork::Mainnet,
-        "devnet" => HeliusNetwork::Devnet,
-        _ => return Err("Invalid HELIUS_NETWORK: must be 'mainnet' or 'devnet'".into()),
+    let network = HeliusNetwork::Mainnet;
+
+    // 2. Configure dynamic backfill.
+    let backfill_config = BackfillConfig {
+        enabled: true,
+        ..Default::default()
     };
 
-    println!("📋 Configuration:");
-    println!("   Source: Helius ({:?})", network);
-    println!("   Database: {}", database_url);
-    println!("   Program: {}\n", program_id);
-    println!("ℹ️  Note: Helius Free Tier has rate limits (e.g. 10 TPS).");
-    println!("    Using conservative polling intervals to avoid 429 errors.");
-
-    // Default to WebSocket enabled (true). Pass false to use RPC polling only.
-    let use_websocket = false;
-
-    // Set polling interval based on network and tier
-    // Devnet: More conservative (10s) due to lower limits
-    // Mainnet: Moderate (5s) for free tier
-    let poll_interval = match network {
-        HeliusNetwork::Devnet => 10,
-        HeliusNetwork::Mainnet => 5,
-    };
-
-    if !use_websocket {
-        println!("ℹ️  Mode: RPC Polling Only (WebSocket disabled)");
-        println!(
-            "   Poll Interval: {}s (conservative for rate limits)",
-            poll_interval
-        );
-    } else {
-        println!("ℹ️  Mode: WebSocket + RPC (Default)");
-    }
-
+    // 3. Build the indexer configuration using Helius.
     let config = SolanaIndexerConfigBuilder::new()
-        .with_helius_network(api_key, network, use_websocket)
+        .with_helius_network(api_key, network, true) // `true` enables WebSocket streaming
         .with_database(database_url.clone())
         .program_id(program_id)
-        .with_poll_interval(poll_interval)
-        .with_batch_size(3) // Small batch size to avoid overwhelming rate limits
+        .with_backfill(backfill_config)
         .build()?;
 
     let mut indexer = solana_indexer_sdk::SolanaIndexer::new(config).await?;
 
-    // Initialize schema
+    // 4. Register components.
     let handler = SystemTransferHandler;
-    let db_pool = sqlx::PgPool::connect(&database_url).await?;
-    handler.initialize_schema(&db_pool).await?;
+    handler
+        .initialize_schema(&sqlx::PgPool::connect(&database_url).await?)
+        .await?;
 
-    // Register Decoder
-    indexer.decoder_registry_mut()?.register(
-        "system".to_string(),
-        Box::new(
-            Box::new(SystemTransferDecoder) as Box<dyn InstructionDecoder<SystemTransferEvent>>
-        ),
-    )?;
+    indexer.register_decoder("system", SystemTransferDecoder)?;
+    indexer.register_handler(handler)?;
 
-    // Register Handler
-    indexer.handler_registry_mut()?.register(
-        SystemTransferEvent::discriminator(),
-        Box::new(Box::new(handler) as Box<dyn EventHandler<SystemTransferEvent>>),
-    )?;
+    println!("✅ Setup complete. Starting Helius indexer...");
+    println!("   Press Ctrl+C to stop.");
 
-    println!("🔄 Starting Helius indexer...");
-
-    // Get cancellation token before moving indexer
-    let token = indexer.cancellation_token();
-
-    // Spawn the indexer in a background task
-    let indexer_handle = tokio::spawn(async move { indexer.start().await });
-
-    // Wait for Ctrl+C
-    tokio::select! {
-        result = indexer_handle => {
-            match result {
-                Ok(Ok(())) => println!("✅ Indexer completed successfully."),
-                Ok(Err(e)) => eprintln!("❌ Indexer error: {}", e),
-                Err(e) => eprintln!("❌ Indexer task panicked: {}", e),
-            }
-        }
-        _ = tokio::signal::ctrl_c() => {
-            println!("\n⏰ Ctrl+C received. Initiating graceful shutdown...");
-            token.cancel();
-            println!("✅ Shutdown signal sent. Indexer will stop gracefully.");
-        }
-    }
+    // 5. Start the indexer.
+    indexer.start().await?;
 
     Ok(())
 }

@@ -472,22 +472,22 @@ impl Storage {
     }
 
     pub async fn get_block_hash(&self, slot: u64) -> Result<Option<String>> {
-        let hash = sqlx::query_scalar::<_, Option<String>>(
+        let hash = sqlx::query_scalar::<_, String>(
             "SELECT block_hash FROM _solana_indexer_sdk_finalized_blocks WHERE slot = $1",
         )
         .bind(i64::try_from(slot).unwrap_or(i64::MAX))
-        .fetch_one(&self.pool)
+        .fetch_optional(&self.pool)
         .await?;
 
         if hash.is_some() {
             return Ok(hash);
         }
 
-        let hash = sqlx::query_scalar::<_, Option<String>>(
+        let hash = sqlx::query_scalar::<_, String>(
             "SELECT block_hash FROM _solana_indexer_sdk_tentative WHERE slot = $1 LIMIT 1",
         )
         .bind(i64::try_from(slot).unwrap_or(i64::MAX))
-        .fetch_one(&self.pool)
+        .fetch_optional(&self.pool)
         .await?;
 
         Ok(hash)
@@ -508,10 +508,10 @@ impl Storage {
     }
 
     pub async fn load_backfill_progress(&self) -> Result<Option<u64>> {
-        let slot = sqlx::query_scalar::<_, Option<i64>>(
+        let slot = sqlx::query_scalar::<_, i64>(
             "SELECT last_slot FROM _solana_indexer_sdk_backfill_progress WHERE id = 1",
         )
-        .fetch_one(&self.pool)
+        .fetch_optional(&self.pool)
         .await?;
 
         Ok(slot.map(|s| s.try_into().unwrap_or(0)))

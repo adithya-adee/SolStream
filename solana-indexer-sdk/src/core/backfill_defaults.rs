@@ -1,7 +1,9 @@
+use crate::config::BackfillConfig;
 use crate::core::fetcher::Fetcher;
 use crate::storage::StorageBackend;
 use crate::types::backfill_traits::{
-    BackfillProgress, BackfillStrategy, FinalizedBlockTracker, ReorgEvent, ReorgHandler,
+    BackfillContext, BackfillProgress, BackfillRange, BackfillStrategy, BackfillTrigger,
+    FinalizedBlockTracker, ReorgEvent, ReorgHandler,
 };
 use crate::utils::error::Result;
 use async_trait::async_trait;
@@ -141,5 +143,91 @@ impl BackfillProgress for DefaultBackfillProgress {
 
     async fn mark_complete(&self, storage: &dyn StorageBackend) -> Result<()> {
         storage.mark_backfill_complete().await
+    }
+}
+
+/// Default backfill trigger that uses configuration-based logic.
+///
+/// This trigger implements a simple policy:
+/// - Backfills if lag exceeds `desired_lag_slots` threshold
+/// - Respects `max_depth` limit
+/// - Uses `start_slot` and `end_slot` from config if provided
+pub struct DefaultBackfillTrigger {
+    config: BackfillConfig,
+}
+
+impl DefaultBackfillTrigger {
+    /// Creates a new default backfill trigger.
+    pub fn new(config: BackfillConfig) -> Self {
+        Self { config }
+    }
+}
+
+#[async_trait]
+impl BackfillTrigger for DefaultBackfillTrigger {
+    async fn next_range(
+        &self,
+        ctx: &BackfillContext,
+        _storage: &dyn StorageBackend,
+    ) -> Result<Option<BackfillRange>> {
+        // Check if we should backfill based on lag threshold
+        if !ctx.should_backfill_by_lag() {
+            return Ok(None);
+        }
+
+        // Determine start slot
+        let start_slot = if let Some(config_start) = self.config.start_slot {
+            // Use config start, but don't go before last backfilled slot
+            if let Some(last) = ctx.last_backfilled_slot {
+                config_start.min(last + 1)
+            } else {
+                config_start
+            }
+        } else if let Some(last) = ctx.last_backfilled_slot {
+            // Resume from last backfilled slot
+            last + 1
+        } else {
+            // Start from genesis (slot 0)
+            0
+        };
+
+        // Determine end slot
+        let mut end_slot = if let Some(config_end) = self.config.end_slot {
+            config_end
+        } else {
+            // Use latest finalized, but respect max_depth
+            let latest = ctx.latest_finalized_slot;
+            if let Some(max_depth) = ctx.max_depth {
+                latest.saturating_sub(max_depth).max(start_slot)
+            } else {
+                latest
+            }
+        };
+
+        // Ensure end >= start
+        if end_slot < start_slot {
+            return Ok(None);
+        }
+
+        // Apply max_depth constraint if set
+        if let Some(max_depth) = ctx.max_depth {
+            let max_allowed_start = ctx.latest_finalized_slot.saturating_sub(max_depth);
+            if start_slot < max_allowed_start {
+                // Adjust range to respect max_depth
+                end_slot = end_slot.min(ctx.latest_finalized_slot);
+                if end_slot < max_allowed_start {
+                    return Ok(None);
+                }
+            }
+        }
+
+        // Limit range size to avoid processing too much at once
+        // Process in chunks of up to 10k slots
+        let chunk_size = 10_000;
+        if end_slot - start_slot > chunk_size {
+            end_slot = start_slot + chunk_size;
+        }
+
+        Ok(Some(BackfillRange::new(start_slot, end_slot)))
     }
 }

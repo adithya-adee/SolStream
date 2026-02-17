@@ -8,12 +8,13 @@ use crate::{
     config::{SolanaIndexerConfig, StartStrategy},
     core::{
         account_registry::AccountDecoderRegistry, backfill::BackfillEngine, backfill_defaults::*,
-        decoder::Decoder, fetcher::Fetcher, log_registry::LogDecoderRegistry,
-        registry::DecoderRegistry,
+        backfill_manager::BackfillManager, decoder::Decoder, fetcher::Fetcher,
+        log_registry::LogDecoderRegistry, registry::DecoderRegistry,
     },
     storage::{Storage, StorageBackend},
     streams::{helius::HeliusSource, websocket::WebSocketSource, TransactionSource},
     types::{
+        backfill_traits::{BackfillHandlerRegistry, BackfillTrigger},
         metadata::{TokenBalanceInfo, TxMetadata},
         traits::{HandlerRegistry, SchemaInitializer},
     },
@@ -66,6 +67,8 @@ pub struct SolanaIndexer {
     log_decoder_registry: Arc<LogDecoderRegistry>,
     account_decoder_registry: Arc<AccountDecoderRegistry>,
     handler_registry: Arc<HandlerRegistry>,
+    backfill_handler_registry: Arc<BackfillHandlerRegistry>,
+    backfill_trigger: Option<Arc<dyn BackfillTrigger>>,
     schema_initializers: Vec<Box<dyn SchemaInitializer>>,
     cancellation_token: tokio_util::sync::CancellationToken,
 }
@@ -110,6 +113,8 @@ impl SolanaIndexer {
         let account_decoder_registry =
             Arc::new(AccountDecoderRegistry::new_bounded(&config.registry));
         let handler_registry = Arc::new(HandlerRegistry::new_bounded(&config.registry));
+        let backfill_handler_registry =
+            Arc::new(BackfillHandlerRegistry::new_bounded(&config.registry));
 
         Ok(Self {
             config,
@@ -120,6 +125,8 @@ impl SolanaIndexer {
             log_decoder_registry,
             account_decoder_registry,
             handler_registry,
+            backfill_handler_registry,
+            backfill_trigger: None,
             schema_initializers: Vec::new(),
             cancellation_token: tokio_util::sync::CancellationToken::new(),
         })
@@ -139,6 +146,8 @@ impl SolanaIndexer {
         let account_decoder_registry =
             Arc::new(AccountDecoderRegistry::new_bounded(&config.registry));
         let handler_registry = Arc::new(HandlerRegistry::new_bounded(&config.registry));
+        let backfill_handler_registry =
+            Arc::new(BackfillHandlerRegistry::new_bounded(&config.registry));
 
         Self {
             config,
@@ -149,6 +158,8 @@ impl SolanaIndexer {
             log_decoder_registry,
             account_decoder_registry,
             handler_registry,
+            backfill_handler_registry,
+            backfill_trigger: None,
             schema_initializers: Vec::new(),
             cancellation_token: tokio_util::sync::CancellationToken::new(),
         }
@@ -278,7 +289,115 @@ impl SolanaIndexer {
         let boxed_typed: Box<dyn crate::types::traits::InstructionDecoder<E>> = Box::new(decoder);
         let boxed_dynamic: Box<dyn DynamicInstructionDecoder> = Box::new(boxed_typed);
         self.decoder_registry_mut()?
-            .register(program_id.into(), boxed_dynamic)
+            .register(program_id.into(), boxed_dynamic)?;
+        self.config.indexing_mode.inputs = true;
+        Ok(())
+    }
+
+    /// Registers a typed log decoder and enables log indexing mode.
+    pub fn register_log_decoder<D, E>(
+        &mut self,
+        program_id: impl Into<String>,
+        decoder: D,
+    ) -> Result<()>
+    where
+        D: crate::types::traits::LogDecoder<E> + 'static,
+        E: crate::types::events::EventDiscriminator + borsh::BorshSerialize + Send + Sync + 'static,
+    {
+        use crate::types::traits::DynamicLogDecoder;
+        let boxed_typed: Box<dyn crate::types::traits::LogDecoder<E>> = Box::new(decoder);
+        let boxed_dynamic: Box<dyn DynamicLogDecoder> = Box::new(boxed_typed);
+        self.log_decoder_registry_mut()?
+            .register(program_id.into(), boxed_dynamic)?;
+        self.config.indexing_mode.logs = true;
+        Ok(())
+    }
+
+    /// Registers a typed account decoder and enables account indexing mode.
+    pub fn register_account_decoder<D, E>(&mut self, decoder: D) -> Result<()>
+    where
+        D: crate::types::traits::AccountDecoder<E> + 'static,
+        E: crate::types::events::EventDiscriminator + borsh::BorshSerialize + Send + Sync + 'static,
+    {
+        use crate::types::traits::DynamicAccountDecoder;
+        let boxed: Box<dyn crate::types::traits::AccountDecoder<E>> = Box::new(decoder);
+        let dynamic_boxed: Box<dyn DynamicAccountDecoder> = Box::new(boxed);
+        self.account_decoder_registry_mut()?
+            .register(dynamic_boxed)?;
+        self.config.indexing_mode.accounts = true;
+        Ok(())
+    }
+
+    /// Returns a mutable reference to the backfill handler registry.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SolanaIndexerError::InternalError` if the registry has multiple references.
+    pub fn backfill_handler_registry_mut(&mut self) -> Result<&mut BackfillHandlerRegistry> {
+        Arc::get_mut(&mut self.backfill_handler_registry).ok_or_else(|| {
+            SolanaIndexerError::InternalError(
+                "BackfillHandlerRegistry has multiple references".to_string(),
+            )
+        })
+    }
+
+    /// Registers a typed backfill handler.
+    ///
+    /// This generic method automatically handles the boxing and type erasure required by the registry.
+    ///
+    /// # Arguments
+    ///
+    /// * `handler` - The typed backfill handler instance
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use solana_indexer_sdk::{SolanaIndexer, TxMetadata};
+    /// # use async_trait::async_trait;
+    /// # struct MyBackfillHandler;
+    /// # struct MyEvent;
+    /// # #[async_trait]
+    /// # impl solana_indexer_sdk::BackfillHandler<MyEvent> for MyBackfillHandler {
+    /// #   async fn handle_backfill(&self, _: MyEvent, _: &TxMetadata, _: &sqlx::PgPool) -> solana_indexer_sdk::Result<()> { Ok(()) }
+    /// # }
+    /// # impl solana_indexer_sdk::EventDiscriminator for MyEvent { fn discriminator() -> [u8; 8] { [0; 8] } }
+    /// # impl borsh::BorshDeserialize for MyEvent {
+    /// #   fn deserialize(buf: &mut &[u8]) -> std::io::Result<Self> { Ok(MyEvent) }
+    /// #   fn deserialize_reader<R: std::io::Read>(_: &mut R) -> std::io::Result<Self> { Ok(MyEvent) }
+    /// # }
+    /// # fn example(indexer: &mut SolanaIndexer) -> Result<(), Box<dyn std::error::Error>> {
+    /// indexer.register_backfill_handler(MyBackfillHandler)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn register_backfill_handler<H, E>(&mut self, handler: H) -> Result<()>
+    where
+        H: crate::types::backfill_traits::BackfillHandler<E> + 'static,
+        E: crate::types::events::EventDiscriminator
+            + borsh::BorshDeserialize
+            + Send
+            + Sync
+            + 'static,
+    {
+        use crate::types::backfill_traits::DynamicBackfillHandler;
+        let boxed_typed: Box<dyn crate::types::backfill_traits::BackfillHandler<E>> =
+            Box::new(handler);
+        let boxed_dynamic: Box<dyn DynamicBackfillHandler> = Box::new(boxed_typed);
+
+        self.backfill_handler_registry_mut()?
+            .register(E::discriminator(), boxed_dynamic)
+    }
+
+    /// Sets a custom backfill trigger.
+    ///
+    /// If not set, a default trigger will be used based on `BackfillConfig`.
+    ///
+    /// # Arguments
+    ///
+    /// * `trigger` - The backfill trigger implementation
+    pub fn with_backfill_trigger(&mut self, trigger: Arc<dyn BackfillTrigger>) -> Result<()> {
+        self.backfill_trigger = Some(trigger);
+        Ok(())
     }
 
     /// Registers a typed event handler.
@@ -396,6 +515,8 @@ impl SolanaIndexer {
             reorg_handler,
             finalized_tracker,
             progress_tracker,
+            self.cancellation_token.clone(),
+            self.backfill_handler_registry.clone(),
         );
 
         engine.start().await
@@ -405,6 +526,9 @@ impl SolanaIndexer {
     ///
     /// This method runs indefinitely, fetching and processing transactions
     /// based on the configured source (RPC polling or WebSocket subscription).
+    /// If backfill is enabled, it also starts a BackfillManager that runs
+    /// continuously alongside the live indexer.
+    ///
     /// # Errors
     ///
     /// Returns `SolanaIndexerError` if:
@@ -421,6 +545,55 @@ impl SolanaIndexer {
                 token.cancel();
             }
         });
+
+        // Start BackfillManager if enabled
+        if self.config.backfill.enabled {
+            let backfill_config = self.config.backfill.clone();
+            let backfill_fetcher = self.fetcher.clone();
+            let backfill_decoder = self.decoder.clone();
+            let backfill_storage = self.storage.clone();
+            let backfill_strategy = Arc::new(DefaultBackfillStrategy {
+                start_slot: backfill_config.start_slot,
+                end_slot: backfill_config.end_slot,
+                batch_size: backfill_config.batch_size,
+                concurrency: backfill_config.concurrency,
+            });
+            let backfill_reorg_handler = Arc::new(DefaultReorgHandler);
+            let backfill_finalized_tracker = Arc::new(DefaultFinalizedBlockTracker);
+            let backfill_progress_tracker = Arc::new(DefaultBackfillProgress);
+            let backfill_trigger = self.backfill_trigger.clone().unwrap_or_else(|| {
+                Arc::new(DefaultBackfillTrigger::new(backfill_config.clone()))
+                    as Arc<dyn BackfillTrigger>
+            });
+            let backfill_handlers = self.backfill_handler_registry.clone();
+            let backfill_cancellation = self.cancellation_token.clone();
+            let backfill_decoder_registry = self.decoder_registry.clone();
+            let backfill_log_decoder_registry = self.log_decoder_registry.clone();
+            let backfill_account_decoder_registry = self.account_decoder_registry.clone();
+
+            let manager = BackfillManager::new(
+                self.config.clone(),
+                backfill_fetcher,
+                backfill_decoder,
+                backfill_storage,
+                backfill_strategy,
+                backfill_reorg_handler,
+                backfill_finalized_tracker,
+                backfill_progress_tracker,
+                backfill_trigger,
+                backfill_handlers,
+                backfill_cancellation,
+                backfill_decoder_registry,
+                backfill_log_decoder_registry,
+                backfill_account_decoder_registry,
+            );
+
+            tokio::spawn(async move {
+                if let Err(e) = manager.run().await {
+                    logging::log_error("BackfillManager error", &e.to_string());
+                }
+            });
+        }
 
         // Spawn background cleanup task
         let cleanup_token = self.cancellation_token.clone();
@@ -1452,49 +1625,53 @@ impl SolanaIndexer {
                     let keys: Vec<_> = writable_accounts.into_iter().collect();
                     // Batch fetch
                     if let Ok(accounts) = fetcher.fetch_multiple_accounts(&keys).await {
-                        for account in accounts.iter().flatten() {
-                            let decoded_list = account_decoder_registry.decode_account(account);
-                            for (discriminator, event_data) in decoded_list {
-                                // Dispatch to handler
-                                // Retry logic similar to above
-                                let mut attempts = 0;
-                                let max_attempts = 3;
-                                loop {
-                                    attempts += 1;
-                                    match handler_registry
-                                        .handle(
-                                            &discriminator,
-                                            &event_data,
-                                            &context,
-                                            storage.pool(),
-                                        )
-                                        .await
-                                    {
-                                        Ok(()) => break,
-                                        Err(e) if attempts < max_attempts => {
-                                            logging::log_error(
-                                                "Handler error (Account)",
-                                                &format!(
+                        for (index, account_option) in accounts.iter().enumerate() {
+                            if let Some(account) = account_option {
+                                let pubkey = &keys[index];
+                                let decoded_list =
+                                    account_decoder_registry.decode_account(pubkey, account);
+                                for (discriminator, event_data) in decoded_list {
+                                    // Dispatch to handler
+                                    // Retry logic similar to above
+                                    let mut attempts = 0;
+                                    let max_attempts = 3;
+                                    loop {
+                                        attempts += 1;
+                                        match handler_registry
+                                            .handle(
+                                                &discriminator,
+                                                &event_data,
+                                                &context,
+                                                storage.pool(),
+                                            )
+                                            .await
+                                        {
+                                            Ok(()) => break,
+                                            Err(e) if attempts < max_attempts => {
+                                                logging::log_error(
+                                                    "Handler error (Account)",
+                                                    &format!(
                                                     "Attempt {attempts}/{max_attempts} for {sig_str}: {e}"
                                                 ),
-                                            );
-                                            tokio::time::sleep(Duration::from_millis(
-                                                100 * attempts,
-                                            ))
-                                            .await;
-                                        }
-                                        Err(e) => {
-                                            logging::log_error(
-                                                "Handler failed after retries (Account)",
-                                                &format!("{sig_str}: {e}"),
-                                            );
-                                            // We log error but maybe don't fail the whole tx for one account?
-                                            // Return error to be safe
-                                            return Err(e);
+                                                );
+                                                tokio::time::sleep(Duration::from_millis(
+                                                    100 * attempts,
+                                                ))
+                                                .await;
+                                            }
+                                            Err(e) => {
+                                                logging::log_error(
+                                                    "Handler failed after retries (Account)",
+                                                    &format!("{sig_str}: {e}"),
+                                                );
+                                                // We log error but maybe don't fail the whole tx for one account?
+                                                // Return error to be safe
+                                                return Err(e);
+                                            }
                                         }
                                     }
+                                    events_processed += 1;
                                 }
-                                events_processed += 1;
                             }
                         }
                     }
