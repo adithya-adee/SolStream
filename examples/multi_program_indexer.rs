@@ -153,7 +153,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
     println!("🚀 Starting Multi-Program Indexer (System + Memo)...");
 
-    let rpc_url = "https://api.mainnet-beta.solana.com".to_string();
+    let rpc_url = std::env::var("RPC_URL")
+        .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
     let db_url = std::env::var("DATABASE_URL")?;
 
     let backfill_config = BackfillConfig {
@@ -166,6 +167,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_rpc(rpc_url.clone())
         .with_database(db_url.clone())
         .program_id(SYSTEM_PROGRAM_ID)
+        .with_poll_interval(10)
         .with_backfill(backfill_config.clone())
         .build()?;
 
@@ -174,6 +176,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_rpc(rpc_url)
         .with_database(db_url.clone())
         .program_id(MEMO_PROGRAM_ID)
+        .with_poll_interval(10) // Poll every 30 seconds for Jupiter
         .with_backfill(backfill_config)
         .build()?;
 

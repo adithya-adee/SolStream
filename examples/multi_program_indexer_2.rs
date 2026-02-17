@@ -343,7 +343,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("🚀 Starting Multi-Program Indexer with Dynamic Backfill (Jupiter + System)...");
 
-    let rpc_url = "https://api.mainnet-beta.solana.com".to_string();
+    let rpc_url = std::env::var("RPC_URL")
+        .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
     let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
 
     println!("RPC: {}", rpc_url);
@@ -377,7 +378,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_rpc(rpc_url.clone())
         .with_database(db_url.clone())
         .program_id(JUPITER_PROGRAM_ID)
-        .with_poll_interval(5)
+        .with_poll_interval(30) // Poll every 30 seconds for Jupiter
         .with_batch_size(100)
         .with_backfill(jupiter_backfill_config);
 
@@ -388,7 +389,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_rpc(rpc_url)
         .with_database(db_url.clone())
         .program_id(SYSTEM_PROGRAM_ID)
-        .with_poll_interval(2)
+        .with_poll_interval(15) // Poll every 15 seconds for System Program
         .with_batch_size(100)
         .with_backfill(system_backfill_config);
 
