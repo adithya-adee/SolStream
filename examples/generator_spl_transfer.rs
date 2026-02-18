@@ -19,7 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Payer Pubkey: {}", payer.pubkey());
 
     println!("Requesting airdrop...");
-    let airdrop_amount = 2_000_000_000; // 2 SOL in lamports
+    let airdrop_amount = 5_000_000_000; // 5 SOL in lamports
     let airdrop_sig = connection
         .request_airdrop(&payer.pubkey(), airdrop_amount)
         .await?;
@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
 
-    let mut ticker = interval(Duration::from_secs(5));
+    let mut ticker = interval(Duration::from_millis(500));
     println!("Airdrop confirmed.");
     println!("Starting transaction generation loop (every 5s)...");
 

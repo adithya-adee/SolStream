@@ -14,7 +14,9 @@ use crate::{
     storage::{Storage, StorageBackend},
     streams::{helius::HeliusSource, websocket::WebSocketSource, TransactionSource},
     types::{
-        backfill_traits::{BackfillHandlerRegistry, BackfillTrigger},
+        backfill_traits::{
+            BackfillHandlerRegistry, BackfillRange, BackfillTrigger, FinalizedBlockTracker,
+        },
         metadata::{TokenBalanceInfo, TxMetadata},
         traits::{HandlerRegistry, SchemaInitializer},
     },
@@ -520,6 +522,66 @@ impl SolanaIndexer {
         );
 
         engine.start().await
+    }
+
+    /// Manually backfill a specific slot range.
+    ///
+    /// This is useful when integrating the SDK into a web framework (Axum, Actix, etc.)
+    /// and exposing an endpoint that triggers ad-hoc backfill jobs.
+    ///
+    /// - `from_slot` (inclusive): the starting slot to backfill from.
+    /// - `to_slot` (inclusive, optional): the ending slot to backfill to. If `None`,
+    ///   the latest finalized slot will be used.
+    pub async fn backfill_slots(&self, from_slot: u64, to_slot: Option<u64>) -> Result<()> {
+        // Resolve the target end slot if not provided explicitly.
+        let finalized_tracker = Arc::new(DefaultFinalizedBlockTracker);
+        let effective_end_slot = if let Some(slot) = to_slot {
+            slot
+        } else {
+            finalized_tracker
+                .get_latest_finalized_slot(&self.fetcher)
+                .await?
+        };
+
+        // No-op if the requested range is empty.
+        if effective_end_slot < from_slot {
+            return Ok(());
+        }
+
+        // Reuse the same defaults as `start_backfill` for strategy and helpers.
+        let backfill_config = self.config.backfill.clone();
+        let strategy = Arc::new(DefaultBackfillStrategy {
+            start_slot: Some(from_slot),
+            end_slot: Some(effective_end_slot),
+            batch_size: backfill_config.batch_size,
+            concurrency: backfill_config.concurrency,
+        });
+
+        let reorg_handler = Arc::new(DefaultReorgHandler);
+        let progress_tracker = Arc::new(DefaultBackfillProgress);
+
+        let engine = BackfillEngine::new(
+            self.config.clone(),
+            self.fetcher.clone(),
+            self.decoder.clone(),
+            self.decoder_registry.clone(),
+            self.log_decoder_registry.clone(),
+            self.account_decoder_registry.clone(),
+            // For ad-hoc backfill we only care about backfill handlers,
+            // so use an empty live handler registry.
+            Arc::new(HandlerRegistry::new()),
+            self.storage.clone(),
+            strategy,
+            reorg_handler,
+            finalized_tracker,
+            progress_tracker,
+            self.cancellation_token.clone(),
+            self.backfill_handler_registry.clone(),
+        );
+
+        engine
+            .start_range(BackfillRange::new(from_slot, effective_end_slot))
+            .await
     }
 
     /// Starts the indexer.
