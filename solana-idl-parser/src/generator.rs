@@ -1,5 +1,6 @@
 use crate::model::*;
 use anyhow::Result;
+use heck::ToPascalCase;
 use proc_macro2::Span;
 use quote::quote;
 use syn::Ident;
@@ -88,9 +89,13 @@ fn generate_anchor_types(idl: &Idl) -> Result<String> {
         }
     });
 
+    let program_name = idl.metadata.as_ref().map(|m| &m.name).unwrap_or(&idl.name);
+    let error_name_pascal = program_name.to_pascal_case();
+    let error_enum_name = Ident::new(&format!("{}Error", error_name_pascal), Span::call_site());
+
     let error_enum = quote! {
         #[error_code]
-        pub enum SolraiserError {
+        pub enum #error_enum_name {
             #(#error_codes)*
         }
     };
@@ -174,6 +179,66 @@ fn generate_sdk_types(idl: &Idl) -> Result<String> {
         };
 
         code.extend(event_struct);
+    }
+
+    fn process_account_items(items: &[IdlAccountItem], fields: &mut Vec<proc_macro2::TokenStream>) {
+        for item in items {
+            match item {
+                IdlAccountItem::IdlAccount(account) => {
+                    let account_name_ident = Ident::new(&account.name, Span::call_site());
+                    fields.push(quote! {
+                        pub #account_name_ident: Pubkey
+                    });
+                }
+                IdlAccountItem::IdlAccounts(accounts) => {
+                    process_account_items(&accounts.accounts, fields);
+                }
+            }
+        }
+    }
+    // Generate instruction arg and accounts structs
+    for ix in &idl.instructions {
+        let ix_name_pascal = ix.name.to_pascal_case();
+
+        // Generate instruction args struct
+        if !ix.args.is_empty() {
+            let instruction_args_name_ident =
+                Ident::new(&format!("{}Args", ix_name_pascal), Span::call_site());
+
+            let fields = ix.args.iter().map(|field| {
+                let field_name = &field.name;
+                let field_name_ident = Ident::new(field_name, Span::call_site());
+                let field_ty = idl_type_to_rust_type(&field.ty, GenerationMode::Sdk);
+                quote! {
+                    pub #field_name_ident: #field_ty,
+                }
+            });
+
+            let instruction_args_struct = quote! {
+                #[derive(BorshSerialize, BorshDeserialize, Clone, Debug)]
+                pub struct #instruction_args_name_ident {
+                    #(#fields)*
+                }
+            };
+            code.extend(instruction_args_struct);
+        }
+
+        // Generate instruction accounts struct
+        if !ix.accounts.is_empty() {
+            let instruction_accounts_name_ident =
+                Ident::new(&format!("{}Accounts", ix_name_pascal), Span::call_site());
+
+            let mut account_fields = Vec::new();
+            process_account_items(&ix.accounts, &mut account_fields);
+
+            let instruction_accounts_struct = quote! {
+                #[derive(Clone, Debug)]
+                pub struct #instruction_accounts_name_ident {
+                    #(#account_fields),*
+                }
+            };
+            code.extend(instruction_accounts_struct);
+        }
     }
 
     // Generate error enum (simplified for SDK - no Anchor attributes)

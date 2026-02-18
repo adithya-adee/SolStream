@@ -4173,6 +4173,7 @@ dependencies = [
  "anchor-lang",
  "anyhow",
  "borsh 1.6.0",
+ "heck 0.5.0",
  "proc-macro2",
  "quote",
  "serde",

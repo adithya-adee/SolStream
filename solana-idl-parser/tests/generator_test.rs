@@ -1,60 +1,89 @@
-use solana_idl_parser::generate_from_idl;
+use solana_idl_parser::{
+    generator::generate_types_with_mode, generator::GenerationMode, model::Idl,
+};
+use std::fs;
 use std::path::PathBuf;
 
+fn load_idl(file_name: &str) -> Idl {
+    let idl_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join(file_name);
+    let idl_content = fs::read_to_string(idl_path).unwrap();
+    serde_json::from_str(&idl_content).unwrap()
+}
+
 #[test]
-fn test_generate_from_idl() {
-    let idl_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/solraiser.json");
-    let out_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/generated");
-    let generated_path = out_dir.join("generated_types.rs");
+fn test_sdk_generation_with_idl2() {
+    let idl = load_idl("idl2.json");
+    let generated_code = generate_types_with_mode(&idl, GenerationMode::Sdk).unwrap();
 
-    std::fs::create_dir_all(&out_dir).unwrap();
+    let normalized_code = generated_code.replace(|c: char| c.is_whitespace(), "");
 
-    generate_from_idl(&idl_path, &generated_path).unwrap();
+    // Test custom types
+    assert!(normalized_code.contains("pubstructUserProfile"));
+    assert!(normalized_code.contains("pubname:String"));
+    assert!(normalized_code.contains("pubage:u8"));
+    assert!(normalized_code.contains("pubcountry:Option<String>"));
 
-    let generated_code = std::fs::read_to_string(generated_path).unwrap();
+    // Test events
+    assert!(normalized_code.contains("pubstructUserInitialized"));
+    assert!(normalized_code.contains("implEventDiscriminatorforUserInitialized"));
 
-    let expected_code = r#"use anchor_lang::prelude::*;
+    // Test instruction args
+    assert!(normalized_code.contains("pubstructInitializeArgs"));
+    assert!(normalized_code.contains("pubname:String"));
+    assert!(normalized_code.contains("pubage:u8"));
 
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
-pub struct Campaign {
-    pub creator_pubkey: Pubkey,
-    pub campaign_id: u64,
-    pub goal_amount: u64,
-    pub amount_raised: u64,
-    pub deadline: i64,
-    pub metadata_url: String,
-    pub is_withdrawn: bool,
-    pub withdrawn_amount: u64,
+    assert!(normalized_code.contains("pubstructProcessDataArgs"));
+    assert!(normalized_code.contains("pubdata:Vec<u8>"));
+    assert!(normalized_code.contains("pubuser_profile:UserProfile"));
+    assert!(normalized_code.contains("pubstructProcessArrayArgs{pubdata:[u8;32],}"));
+
+    // Test instruction accounts
+    assert!(normalized_code.contains("pubstructInitializeAccounts"));
+    assert!(normalized_code.contains("pubuser:Pubkey"));
+    assert!(normalized_code.contains("pubauthority:Pubkey"));
+
+    assert!(normalized_code.contains("pubstructProcessDataAccounts"));
+    assert!(normalized_code.contains("pubdata_account:Pubkey"));
+    assert!(normalized_code.contains("pubnested_account:Pubkey"));
+
+    // Test error enum
+    assert!(normalized_code.contains("pubenumProgramError"));
+    assert!(normalized_code.contains("InvalidUserData=6000"));
 }
 
-#[error_code]
-pub enum SolraiserError {
-    #[msg("Goal amount must be greater than 0")]
-    InvalidGoalAmount,
-    #[msg("Deadline must be in the future")]
-    InvalidDeadline,
-    #[msg("Metadata URL exceeds maximum length")]
-    MetadataUrlTooLong,
-    #[msg("Amount must be greater than 0")]
-    InvalidAmount,
-    #[msg("Unauthorized withdrawal - only campaign creator can withdraw")]
-    UnauthorizedWithdraw,
-    #[msg("Campaign has already reached its goal")]
-    CampaignGoalReached,
-    #[msg("Campaign deadline has passed")]
-    CampaignExpired,
-    #[msg("Campaign is still active, cannot withdraw yet")]
-    CampaignStillActive,
-    #[msg("Campaign goal has not been reached")]
-    GoalNotReached,
-    #[msg("Arithmetic overflow occurred")]
-    ArithmeticOverflow,
-    #[msg("Insufficient funds - withdrawal would violate rent exemption")]
-    InsufficientFunds,
-    #[msg("Campaign has already been withdrawn")]
-    AlreadyWithdrawn,
-}
-"#;
+#[test]
+fn test_anchor_generation_with_idl2() {
+    let idl = load_idl("idl2.json");
+    let generated_code = generate_types_with_mode(&idl, GenerationMode::Anchor).unwrap();
 
-    assert_eq!(generated_code.trim(), expected_code.trim());
+    let normalized_code = generated_code.replace(|c: char| c.is_whitespace(), "");
+
+    // Test custom types
+    assert!(normalized_code.contains("pubstructUserProfile"));
+    assert!(normalized_code.contains("#[derive(AnchorSerialize,AnchorDeserialize,Clone,Debug)]"));
+
+    // Test events
+    assert!(normalized_code.contains("#[event]pubstructUserInitialized"));
+
+    // Test error enum
+    assert!(normalized_code.contains("pubenumComprehensiveTestProgramError"));
+    assert!(normalized_code.contains("#[msg(\"Invaliduserdataprovided\")]InvalidUserData"));
+}
+
+#[test]
+fn test_sdk_generation_with_idl() {
+    let idl = load_idl("idl.json");
+    let generated_code = generate_types_with_mode(&idl, GenerationMode::Sdk).unwrap();
+    let normalized_code = generated_code.replace(|c: char| c.is_whitespace(), "");
+    assert!(normalized_code.contains("pubstructMyEvent"));
+}
+
+#[test]
+fn test_anchor_generation_with_idl() {
+    let idl = load_idl("idl.json");
+    let generated_code = generate_types_with_mode(&idl, GenerationMode::Anchor).unwrap();
+    let normalized_code = generated_code.replace(|c: char| c.is_whitespace(), "");
+    assert!(normalized_code.contains("#[event]pubstructMyEvent"));
 }

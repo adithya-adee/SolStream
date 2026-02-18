@@ -4,8 +4,11 @@ use serde_json::Value;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Idl {
-    pub address: String,
-    pub metadata: IdlMetadata,
+    pub name: String,
+    #[serde(default)]
+    pub address: Option<String>,
+    #[serde(default)]
+    pub metadata: Option<IdlMetadata>,
     pub instructions: Vec<IdlInstruction>,
     #[serde(default)]
     pub accounts: Vec<IdlAccount>,
@@ -32,7 +35,8 @@ pub struct IdlInstruction {
     pub name: String,
     #[serde(default)]
     pub docs: Vec<String>,
-    pub discriminator: Vec<u8>,
+    #[serde(default)]
+    pub discriminator: Option<Vec<u8>>,
     pub accounts: Vec<IdlAccountItem>,
     pub args: Vec<IdlField>,
 }
@@ -47,9 +51,11 @@ pub enum IdlAccountItem {
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct IdlInstructionAccount {
     pub name: String,
     #[serde(default)]
+    #[serde(alias = "writable")]
     pub is_mut: bool,
     #[serde(default)]
     pub is_signer: bool,
@@ -109,6 +115,8 @@ pub struct IdlField {
     pub name: String,
     #[serde(rename = "type")]
     pub ty: IdlTypeDefinition,
+    #[serde(default)]
+    pub index: bool,
 }
 
 #[derive(Debug, Deserialize)]
