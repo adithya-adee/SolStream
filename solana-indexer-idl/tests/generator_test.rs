@@ -1,4 +1,4 @@
-use solana_idl_parser::{
+use solana_indexer_idl::{
     generator::generate_types_with_mode, generator::GenerationMode, model::Idl,
 };
 use std::fs;

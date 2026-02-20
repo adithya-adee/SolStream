@@ -4365,23 +4365,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-idl-parser"
-version = "0.1.0"
-dependencies = [
- "anchor-lang",
- "anyhow",
- "borsh 1.6.0",
- "heck 0.5.0",
- "proc-macro2",
- "quote",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "solana-sdk",
- "syn 1.0.109",
-]
-
-[[package]]
 name = "solana-indexer-benches"
 version = "0.1.0"
 dependencies = [
@@ -4408,12 +4391,29 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "solana-client",
- "solana-idl-parser",
+ "solana-indexer-idl",
  "solana-indexer-sdk",
  "solana-sdk",
  "solana-transaction-status",
  "sqlx",
  "tokio",
+]
+
+[[package]]
+name = "solana-indexer-idl"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+ "anyhow",
+ "borsh 1.6.0",
+ "heck 0.5.0",
+ "proc-macro2",
+ "quote",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "solana-sdk",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -4440,7 +4440,7 @@ dependencies = [
  "sha2 0.10.9",
  "solana-account-decoder",
  "solana-client",
- "solana-idl-parser",
+ "solana-indexer-idl",
  "solana-sdk",
  "solana-transaction-status",
  "sqlx",

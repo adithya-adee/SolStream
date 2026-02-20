@@ -17,7 +17,7 @@
 //!     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 //!     let generated_path = out_dir.join("generated_types.rs");
 //!
-//!     solana_idl_parser::generate_sdk_types(&idl_path, &generated_path)
+//!     solana_indexer_idl::generate_sdk_types(&idl_path, &generated_path)
 //!         .expect("Failed to generate types from IDL");
 //!
 //!     println!("cargo:rerun-if-changed={}", idl_path.display());
@@ -32,4 +32,4 @@
 //! ```
 
 //! Note: The IDL parser functions are available as build-dependencies.
-//! Use `solana_idl_parser::generate_sdk_types` directly in your `build.rs` script.
+//! Use `solana_indexer_idl::generate_sdk_types` directly in your `build.rs` script.

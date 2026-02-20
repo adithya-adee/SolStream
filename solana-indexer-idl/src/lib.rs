@@ -50,7 +50,7 @@ pub fn generate_from_idl(idl_path: &Path, output_path: &Path) -> Result<()> {
 ///
 /// ```no_run
 /// use std::path::PathBuf;
-/// use solana_idl_parser::generate_sdk_types;
+/// use solana_indexer_idl::generate_sdk_types;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let idl_path = PathBuf::from("idl/my_program.json");

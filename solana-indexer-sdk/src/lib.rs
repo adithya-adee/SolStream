@@ -164,7 +164,7 @@ pub use utils::macros::{
 };
 
 // IDL module is available for documentation purposes
-// Use solana_idl_parser::generate_sdk_types in build.rs scripts
+// Use solana_indexer_idl::generate_sdk_types in build.rs scripts
 
 // Module declarations
 pub mod config;

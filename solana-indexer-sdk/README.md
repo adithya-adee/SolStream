@@ -60,7 +60,7 @@ The SDK includes support for automatically generating Rust types from Solana pro
 solana-indexer-sdk = { path = "../solana-indexer-sdk", features = ["idl-parser"] }
 
 [build-dependencies]
-solana-idl-parser = { path = "../solana-idl-parser" }
+solana-indexer-idl = { path = "../solana-indexer-idl" }
 ```
 
 2. **Create a `build.rs` file** in your project root:
@@ -74,7 +74,7 @@ fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let generated_path = out_dir.join("generated_types.rs");
 
-    solana_idl_parser::generate_sdk_types(&idl_path, &generated_path)
+    solana_indexer_idl::generate_sdk_types(&idl_path, &generated_path)
         .expect("Failed to generate types from IDL");
 
     println!("cargo:rerun-if-changed={}", idl_path.display());

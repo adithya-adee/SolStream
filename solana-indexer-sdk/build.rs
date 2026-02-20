@@ -17,7 +17,7 @@ fn main() {
 
             println!("cargo:warning=Generating types from IDL: {:?}", idl_path);
 
-            solana_idl_parser::generate_sdk_types(&idl_path, &generated_path)
+            solana_indexer_idl::generate_sdk_types(&idl_path, &generated_path)
                 .expect("Failed to generate types from IDL");
 
             println!("cargo:rerun-if-changed={}", idl_path.display());

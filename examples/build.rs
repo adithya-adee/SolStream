@@ -19,11 +19,11 @@ fn main() {
         );
 
         // Generate for build process
-        solana_idl_parser::generate_sdk_types(&idl_path, &generated_path)
+        solana_indexer_idl::generate_sdk_types(&idl_path, &generated_path)
             .expect("Failed to generate types from IDL");
 
         // Export to the idl directory for visibility
-        solana_idl_parser::generate_sdk_types(&idl_path, &export_path)
+        solana_indexer_idl::generate_sdk_types(&idl_path, &export_path)
             .expect("Failed to export types to idl directory");
 
         println!("cargo:rerun-if-changed={}", idl_path.display());
