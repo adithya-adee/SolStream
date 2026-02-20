@@ -7,9 +7,10 @@ use crate::config::SourceConfig;
 use crate::{
     config::{SolanaIndexerConfig, StartStrategy},
     core::{
-        account_registry::AccountDecoderRegistry, backfill::BackfillEngine, backfill_defaults::*,
-        backfill_manager::BackfillManager, decoder::Decoder, fetcher::Fetcher,
-        log_registry::LogDecoderRegistry, registry::DecoderRegistry,
+        backfill::defaults::*, backfill::engine::BackfillEngine,
+        backfill::manager::BackfillManager, decoding::Decoder, execution::fetcher::Fetcher,
+        registry::account::AccountDecoderRegistry, registry::logs::LogDecoderRegistry,
+        registry::DecoderRegistry,
     },
     storage::{Storage, StorageBackend},
     streams::{helius::HeliusSource, websocket::WebSocketSource, TransactionSource},

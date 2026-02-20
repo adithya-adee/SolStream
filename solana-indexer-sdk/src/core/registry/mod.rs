@@ -1,5 +1,9 @@
+pub mod account;
+pub mod logs;
+pub mod metrics;
+
 use crate::config::RegistryConfig;
-use crate::core::registry_metrics::RegistryMetrics;
+use crate::core::registry::metrics::RegistryMetrics;
 use crate::types::traits::DynamicInstructionDecoder;
 use crate::utils::error::{Result, SolanaIndexerError};
 use solana_transaction_status::UiInstruction;

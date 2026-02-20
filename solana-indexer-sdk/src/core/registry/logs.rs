@@ -5,7 +5,7 @@
 //! logs and events dynamically.
 
 use crate::config::RegistryConfig;
-use crate::core::registry_metrics::RegistryMetrics;
+use crate::core::registry::metrics::RegistryMetrics;
 use crate::types::events::ParsedEvent;
 use crate::types::traits::DynamicLogDecoder;
 use crate::utils::error::{Result, SolanaIndexerError};

@@ -4,6 +4,7 @@
 //! the `EventHandler` trait. Developers implement this trait to define custom
 //! business logic for processing decoded events and transactions.
 
+use crate::core::registry::metrics::RegistryMetrics;
 use crate::types::events::{EventDiscriminator, ParsedEvent};
 use crate::types::metadata::TxMetadata;
 use crate::utils::error::{Result, SolanaIndexerError};
@@ -367,7 +368,7 @@ where
 pub struct HandlerRegistry {
     /// Map of discriminators to handlers
     handlers: std::collections::HashMap<[u8; 8], Box<dyn DynamicEventHandler>>,
-    metrics: crate::core::registry_metrics::RegistryMetrics,
+    metrics: RegistryMetrics,
 }
 
 impl HandlerRegistry {
@@ -384,7 +385,7 @@ impl HandlerRegistry {
     pub fn new() -> Self {
         Self {
             handlers: std::collections::HashMap::new(),
-            metrics: crate::core::registry_metrics::RegistryMetrics::new("EventHandler", 0),
+            metrics: RegistryMetrics::new("EventHandler", 0),
         }
     }
 
@@ -392,10 +393,7 @@ impl HandlerRegistry {
     pub fn new_bounded(config: &crate::config::RegistryConfig) -> Self {
         Self {
             handlers: std::collections::HashMap::new(),
-            metrics: crate::core::registry_metrics::RegistryMetrics::new(
-                "EventHandler",
-                config.max_handlers,
-            ),
+            metrics: RegistryMetrics::new("EventHandler", config.max_handlers),
         }
     }
 
@@ -522,7 +520,7 @@ impl HandlerRegistry {
     }
 
     /// Returns the metrics for this registry.
-    pub fn metrics(&self) -> &crate::core::registry_metrics::RegistryMetrics {
+    pub fn metrics(&self) -> &RegistryMetrics {
         &self.metrics
     }
 }

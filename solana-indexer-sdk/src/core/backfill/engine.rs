@@ -1,9 +1,9 @@
 use crate::config::SolanaIndexerConfig;
-use crate::core::account_registry::AccountDecoderRegistry;
-use crate::core::decoder::Decoder;
-use crate::core::fetcher::Fetcher;
-use crate::core::indexer::SolanaIndexer;
-use crate::core::log_registry::LogDecoderRegistry;
+use crate::core::decoding::Decoder;
+use crate::core::execution::fetcher::Fetcher;
+use crate::core::execution::indexer::SolanaIndexer;
+use crate::core::registry::account::AccountDecoderRegistry;
+use crate::core::registry::logs::LogDecoderRegistry;
 use crate::core::registry::DecoderRegistry;
 use crate::storage::StorageBackend;
 use crate::types::backfill_traits::{

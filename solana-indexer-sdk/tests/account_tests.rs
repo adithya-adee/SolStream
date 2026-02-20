@@ -1,6 +1,6 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_indexer_sdk::{
-    core::account_registry::AccountDecoderRegistry,
+    core::registry::account::AccountDecoderRegistry,
     types::{events::EventDiscriminator, traits::AccountDecoder},
 };
 use solana_sdk::account::Account;

@@ -5,6 +5,7 @@ This repository contains the `solana-indexer-sdk` and a set of examples and benc
 ## `solana-indexer-sdk`
 
 The `solana-indexer-sdk` is a lightweight, customizable, and high-performance SDK for indexing data from the Solana blockchain.
+Internally, the SDK's core architecture is cleanly separated into modular sub-components (`execution`, `registry`, `backfill`, and `decoding`), making it robust and easy to contribute to.
 
 For more information, please see the [SDK's README](solana-indexer-sdk/README.md).
 

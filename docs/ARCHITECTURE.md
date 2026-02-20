@@ -128,7 +128,17 @@ indexer.start().await?;
 
 ---
 
-## 4. IDL Processing & Type Generation
+## 4. Codebase Structure (`src/core`)
+
+The `src/core` module is deliberately segregated into focused subdirectories to ensure maintainability and separation of concerns:
+- **`execution/`**: Houses the main indexing loop (`indexer.rs`) and concurrent RPC worker pool (`fetcher.rs`).
+- **`registry/`**: Manages dynamic dispatch mechanisms (`DecoderRegistry`, `HandlerRegistry`, `AccountDecoderRegistry`, etc.) and telemetry (`metrics.rs`).
+- **`backfill/`**: Contains the historical backfill engines, state manager, and configurable strategy definitions.
+- **`decoding/`**: The translation layer that turns raw transaction metadata into typed program events.
+
+---
+
+## 5. IDL Processing & Type Generation
 
 - **IDL-Driven Development:** Place `idl.json` files in the `idl/` directory.
 - **Procedural Macro Compilation:** During `cargo build`, a proc macro generates:

@@ -4,8 +4,8 @@
 //! Solana RPC endpoints for new transaction signatures.
 
 use crate::config::SolanaIndexerConfig;
-use crate::core::decoder::Decoder;
-use crate::core::fetcher::Fetcher;
+use crate::core::decoding::Decoder;
+use crate::core::execution::fetcher::Fetcher;
 use crate::utils::error::{Result, SolanaIndexerError};
 use solana_client::rpc_client::{GetConfirmedSignaturesForAddress2Config, RpcClient};
 use solana_sdk::commitment_config::CommitmentConfig;

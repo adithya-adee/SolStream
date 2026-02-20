@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use serde_json::json;
-use solana_indexer_sdk::core::decoder::Decoder;
+use solana_indexer_sdk::core::decoding::Decoder;
 use solana_transaction_status::{
     option_serializer::OptionSerializer, EncodedConfirmedTransactionWithStatusMeta,
     EncodedTransaction, EncodedTransactionWithStatusMeta, UiInstruction, UiMessage,

@@ -1,5 +1,5 @@
 use crate::config::BackfillConfig;
-use crate::core::fetcher::Fetcher;
+use crate::core::execution::fetcher::Fetcher;
 use crate::storage::StorageBackend;
 use crate::types::backfill_traits::{
     BackfillContext, BackfillProgress, BackfillRange, BackfillStrategy, BackfillTrigger,

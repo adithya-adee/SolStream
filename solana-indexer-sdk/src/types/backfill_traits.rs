@@ -1,6 +1,6 @@
 use crate::config::RegistryConfig;
-use crate::core::fetcher::Fetcher;
-use crate::core::registry_metrics::RegistryMetrics;
+use crate::core::execution::fetcher::Fetcher;
+use crate::core::registry::metrics::RegistryMetrics;
 use crate::storage::StorageBackend;
 use crate::types::events::EventDiscriminator;
 use crate::types::metadata::TxMetadata;

@@ -136,11 +136,12 @@
 
 // Public API exports
 pub use config::{SolanaIndexerConfig, SolanaIndexerConfigBuilder};
-pub use core::account_registry::AccountDecoderRegistry;
-pub use core::decoder::{DecodedTransaction, Decoder, InstructionInfo};
-pub use core::fetcher::Fetcher;
-pub use core::indexer::SolanaIndexer;
-pub use core::log_registry::LogDecoderRegistry;
+pub use core::decoding::Decoder;
+pub use core::decoding::{DecodedTransaction, InstructionInfo};
+pub use core::execution::fetcher::Fetcher;
+pub use core::execution::indexer::SolanaIndexer;
+pub use core::registry::account::AccountDecoderRegistry;
+pub use core::registry::logs::LogDecoderRegistry;
 pub use core::registry::DecoderRegistry;
 pub use storage::{Storage, StorageBackend};
 pub use streams::poller::Poller;

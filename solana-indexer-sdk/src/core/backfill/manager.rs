@@ -5,9 +5,9 @@
 //! based on developer-defined triggers.
 
 use crate::config::SolanaIndexerConfig;
-use crate::core::backfill::BackfillEngine;
-use crate::core::decoder::Decoder;
-use crate::core::fetcher::Fetcher;
+use crate::core::backfill::engine::BackfillEngine;
+use crate::core::decoding::Decoder;
+use crate::core::execution::fetcher::Fetcher;
 use crate::storage::StorageBackend;
 use crate::types::backfill_traits::{
     BackfillContext, BackfillHandlerRegistry, BackfillProgress, BackfillRange, BackfillStrategy,
@@ -37,8 +37,8 @@ pub struct BackfillManager {
     cancellation_token: tokio_util::sync::CancellationToken,
     // References to registries needed by BackfillEngine
     decoder_registry: Arc<crate::core::registry::DecoderRegistry>,
-    log_decoder_registry: Arc<crate::core::log_registry::LogDecoderRegistry>,
-    account_decoder_registry: Arc<crate::core::account_registry::AccountDecoderRegistry>,
+    log_decoder_registry: Arc<crate::core::registry::logs::LogDecoderRegistry>,
+    account_decoder_registry: Arc<crate::core::registry::account::AccountDecoderRegistry>,
 }
 
 impl BackfillManager {
@@ -57,8 +57,8 @@ impl BackfillManager {
         backfill_handlers: Arc<BackfillHandlerRegistry>,
         cancellation_token: tokio_util::sync::CancellationToken,
         decoder_registry: Arc<crate::core::registry::DecoderRegistry>,
-        log_decoder_registry: Arc<crate::core::log_registry::LogDecoderRegistry>,
-        account_decoder_registry: Arc<crate::core::account_registry::AccountDecoderRegistry>,
+        log_decoder_registry: Arc<crate::core::registry::logs::LogDecoderRegistry>,
+        account_decoder_registry: Arc<crate::core::registry::account::AccountDecoderRegistry>,
     ) -> Self {
         Self {
             config,

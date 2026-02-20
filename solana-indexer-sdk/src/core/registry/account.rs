@@ -4,7 +4,7 @@
 //! raw `Account` data into typed structures, similar to `DecoderRegistry` for instructions.
 
 use crate::config::RegistryConfig;
-use crate::core::registry_metrics::RegistryMetrics;
+use crate::core::registry::metrics::RegistryMetrics;
 use crate::types::traits::DynamicAccountDecoder;
 use crate::utils::error::{Result, SolanaIndexerError};
 
