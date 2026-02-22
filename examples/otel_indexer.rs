@@ -1,46 +1,59 @@
-//! OpenTelemetry Indexer Example
+//! Production-grade SOL transfer indexer with OpenTelemetry observability.
 //!
-//! Demonstrates how to instrument a Solana indexer with distributed tracing
-//! using the `opentelemetry` feature flag.  Every transaction that reaches the
-//! handler produces a structured OTel span, which any OTLP-compatible backend
-//! (Jaeger, Grafana Tempo, Datadog, Honeycomb …) can store and visualise.
+//! Indexes every native SOL transfer routed through the System Program,
+//! persists them to PostgreSQL, and emits distributed traces to any
+//! OTLP-compatible backend (Jaeger, Grafana Tempo, Datadog, Honeycomb, …).
 //!
-//! # Prerequisites
+//! # Quick Start
 //!
-//! 1. A running OTLP collector.  The quickest option is Jaeger all-in-one:
+//! **1. Start Jaeger (OTLP collector + UI)**
+//! ```sh
+//! docker run -d --name jaeger \
+//!   -e COLLECTOR_OTLP_ENABLED=true \
+//!   -p 16686:16686 \
+//!   -p 4317:4317 \
+//!   jaegertracing/all-in-one:latest
+//! ```
 //!
-//!    ```sh
-//!    docker run -d --name jaeger \
-//!      -p 16686:16686 \   # Jaeger UI
-//!      -p 4317:4317   \   # OTLP gRPC
-//!      jaegertracing/all-in-one:latest
-//!    ```
+//! **2. Configure environment** (`examples/.env`)
+//! ```dotenv
+//! DATABASE_URL=postgres://user:pass@localhost:5432/solana_indexer
+//! RPC_URL=https://api.devnet.solana.com      # use a private endpoint in production
+//! OTLP_ENDPOINT=http://localhost:4317
+//! ```
 //!
-//! 2. A PostgreSQL instance with `DATABASE_URL` set in your `.env`.
+//! **3. Run**
+//! ```sh
+//! cargo run --example otel_indexer --features opentelemetry
+//! ```
 //!
-//! 3. Build and run **with the `opentelemetry` feature**:
+//! **4. View traces** at `http://localhost:16686` → service `solana-sol-transfer-indexer`
 //!
-//!    ```sh
-//!    cargo run \
-//!      --example otel_indexer \
-//!      --features opentelemetry
-//!    ```
+//! # Architecture
 //!
-//! 4. Open `http://localhost:16686` in your browser and search for the
-//!    service `"solana-system-transfer-otel"`.
+//! ```text
+//! Devnet RPC ──poll──► SolTransferDecoder ──► SolTransferHandler ──► PostgreSQL
+//!                │                                   │
+//!           BackfillManager                    OTel Span (handle_transfer)
+//!          (fills history)                          │
+//!                                           OTLP gRPC exporter ──► Jaeger
+//! ```
 //!
-//! # What you will see
+//! # Rate Limit Notes
 //!
-//! - A root span called `"handle_transfer"` for every SOL transfer processed.
-//! - Structured fields on that span: `tx.signature`, `tx.slot`,
-//!   `transfer.from`, `transfer.to`, `transfer.lamports`.
-//! - Child spans emitted by the database helper are automatically linked
-//!   because they share the same `tracing` span context.
+//! Public Solana RPC nodes enforce ~10 req/s. This example is tuned conservatively:
+//! - **Poll interval**: 5 s (12 new-block polls/min)
+//! - **Batch size**: 20 signatures per poll
+//! - **Backfill concurrency**: 3 parallel RPC calls
+//!
+//! For production throughput, replace `RPC_URL` with a private Helius /
+//! QuickNode / Alchemy endpoint that allows higher request rates.
 
 use async_trait::async_trait;
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_indexer_sdk::{
     calculate_discriminator,
+    config::{BackfillConfig, IndexingMode},
     telemetry::{init_telemetry_with_otel, OtelConfig, OtlpProtocol, TelemetryConfig},
     EventDiscriminator, EventHandler, InstructionDecoder, SolanaIndexer,
     SolanaIndexerConfigBuilder, SolanaIndexerError, TxMetadata,
@@ -50,17 +63,17 @@ use solana_transaction_status::{UiInstruction, UiParsedInstruction};
 use sqlx::PgPool;
 use tracing::instrument;
 
-// ── Event type ────────────────────────────────────────────────────────────────
+// The Solana System Program handles all native SOL transfers.
+const SYSTEM_PROGRAM_ID: &str = "11111111111111111111111111111111";
 
-/// Represents a native SOL transfer between two wallets.
-///
-/// We derive `BorshSerialize` / `BorshDeserialize` because the SDK uses Borsh
-/// for its internal event discriminator logic.
+// ── Event ─────────────────────────────────────────────────────────────────────
+
+/// A decoded native SOL transfer between two wallets.
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
 pub struct SolTransfer {
     pub from: Pubkey,
     pub to: Pubkey,
-    /// Transfer amount in lamports (1 SOL = 1_000_000_000 lamports).
+    /// Amount transferred, in lamports (1 SOL = 1_000_000_000 lamports).
     pub lamports: u64,
 }
 
@@ -72,21 +85,19 @@ impl EventDiscriminator for SolTransfer {
 
 // ── Decoder ───────────────────────────────────────────────────────────────────
 
-/// Parses the System Program's `transfer` instruction into a typed
-/// [`SolTransfer`] event.
+/// Decodes System Program `transfer` instructions into [`SolTransfer`] events.
 ///
-/// Returns `None` for any instruction that is not a SOL transfer, so the SDK
-/// will silently skip it.
+/// The RPC returns instructions in JSON-Parsed format when the program is
+/// registered. Any non-transfer instruction yields `None` and is silently
+/// ignored by the SDK.
 pub struct SolTransferDecoder;
 
 impl InstructionDecoder<SolTransfer> for SolTransferDecoder {
     fn decode(&self, instruction: &UiInstruction) -> Option<SolTransfer> {
-        // The RPC returns parsed instructions as JSON when the program is known.
         let UiInstruction::Parsed(UiParsedInstruction::Parsed(parsed)) = instruction else {
             return None;
         };
 
-        // Only handle the System Program `transfer` instruction type.
         if parsed.program != "system" || parsed.parsed.get("type")?.as_str()? != "transfer" {
             return None;
         }
@@ -101,23 +112,43 @@ impl InstructionDecoder<SolTransfer> for SolTransferDecoder {
     }
 }
 
-// ── Handler (with OTel instrumentation) ──────────────────────────────────────
+// ── Handler ───────────────────────────────────────────────────────────────────
 
+/// Persists decoded SOL transfers to PostgreSQL.
+///
+/// Each invocation opens an OpenTelemetry span (`handle_transfer`) containing
+/// structured fields that are indexable in Jaeger, Grafana Tempo, or any
+/// other OTLP backend.
 pub struct SolTransferHandler;
 
 #[async_trait]
 impl EventHandler<SolTransfer> for SolTransferHandler {
-    /// Create the `sol_transfers` table if it does not already exist.
+    /// Creates the `sol_transfers` table and supporting indexes on first run.
     async fn initialize_schema(&self, db: &PgPool) -> Result<(), SolanaIndexerError> {
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS sol_transfers (
-                signature       TEXT        PRIMARY KEY,
-                from_wallet     TEXT        NOT NULL,
-                to_wallet       TEXT        NOT NULL,
-                lamports        BIGINT      NOT NULL,
-                slot            BIGINT      NOT NULL,
-                indexed_at      TIMESTAMPTZ DEFAULT NOW()
+                signature    TEXT        PRIMARY KEY,
+                from_wallet  TEXT        NOT NULL,
+                to_wallet    TEXT        NOT NULL,
+                lamports     BIGINT      NOT NULL,
+                slot         BIGINT      NOT NULL,
+                indexed_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )",
+        )
+        .execute(db)
+        .await?;
+
+        // Indexes for common query patterns (analytics, wallet history).
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_sol_transfers_from ON sol_transfers (from_wallet)",
+        )
+        .execute(db)
+        .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_sol_transfers_to ON sol_transfers (to_wallet)")
+            .execute(db)
+            .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_sol_transfers_slot ON sol_transfers (slot DESC)",
         )
         .execute(db)
         .await?;
@@ -125,28 +156,21 @@ impl EventHandler<SolTransfer> for SolTransferHandler {
         Ok(())
     }
 
-    /// Process a decoded SOL transfer event.
+    /// Persists a transfer and records a structured OTel span.
     ///
-    /// The `#[instrument]` macro opens an OTel span named `"handle_transfer"`
-    /// every time this method is called.  All structured fields listed in
-    /// `fields(...)` are attached to the span so they appear in your tracing
-    /// UI alongside timing and error information.
-    ///
-    /// Because we are inside an async function, `#[instrument]` automatically
-    /// uses `tracing::Span::in_scope` for each `.await` point so the span
-    /// context is never lost across task switches.
+    /// The `#[instrument]` macro attaches the listed fields to the active span
+    /// so every trace entry in Jaeger carries the full transfer context.
+    /// `ON CONFLICT DO NOTHING` guarantees idempotency across restarts and
+    /// backfill re-runs.
     #[instrument(
         name = "handle_transfer",
-        // Attach key business fields as structured span attributes.
-        // These show up as indexed columns in Jaeger / Grafana Tempo.
         fields(
-            tx.signature  = %context.signature,
-            tx.slot       = context.slot,
-            transfer.from = %event.from,
-            transfer.to   = %event.to,
+            tx.signature      = %context.signature,
+            tx.slot           = context.slot,
+            transfer.from     = %event.from,
+            transfer.to       = %event.to,
             transfer.lamports = event.lamports,
         ),
-        // Skip the db pool from auto-formatting — it has no useful Display.
         skip(self, db),
     )]
     async fn handle(
@@ -155,11 +179,6 @@ impl EventHandler<SolTransfer> for SolTransferHandler {
         context: &TxMetadata,
         db: &PgPool,
     ) -> Result<(), SolanaIndexerError> {
-        // The span is already open here.  Any tracing events emitted inside
-        // this function (including those from sqlx if you enable its tracing
-        // integration) will automatically become children of this span.
-        tracing::debug!("inserting transfer into database");
-
         sqlx::query(
             "INSERT INTO sol_transfers (signature, from_wallet, to_wallet, lamports, slot)
              VALUES ($1, $2, $3, $4, $5)
@@ -173,11 +192,40 @@ impl EventHandler<SolTransfer> for SolTransferHandler {
         .execute(db)
         .await?;
 
-        // Emit a structured event that shows up as a log entry *inside* the
-        // span — not as a separate top-level trace.
-        tracing::info!(lamports = event.lamports, "✅ transfer saved");
+        tracing::info!(
+            lamports = event.lamports,
+            sol = event.lamports as f64 / 1_000_000_000.0,
+            "transfer indexed"
+        );
 
         Ok(())
+    }
+}
+
+#[async_trait]
+impl solana_indexer_sdk::types::backfill_traits::BackfillHandler<SolTransfer>
+    for SolTransferHandler
+{
+    #[instrument(
+        name = "handle_backfill_transfer",
+        fields(
+            tx.signature      = %context.signature,
+            tx.slot           = context.slot,
+            transfer.from     = %event.from,
+            transfer.to       = %event.to,
+            transfer.lamports = event.lamports,
+            backfill          = true,
+        ),
+        skip(self, db),
+    )]
+    async fn handle_backfill(
+        &self,
+        event: SolTransfer,
+        context: &TxMetadata,
+        db: &PgPool,
+    ) -> Result<(), SolanaIndexerError> {
+        // Backfill and real-time events share the exact same database insertion logic
+        self.handle(event, context, db).await
     }
 }
 
@@ -185,27 +233,26 @@ impl EventHandler<SolTransfer> for SolTransferHandler {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Load DATABASE_URL and OTLP_ENDPOINT from the project .env file.
+    // Load .env before reading any environment variables.
     dotenvy::dotenv().ok();
 
-    // ── Step 1: Initialise the telemetry pipeline ─────────────────────────────
+    // ── Telemetry ─────────────────────────────────────────────────────────────
     //
-    // `init_telemetry_with_otel` installs a global tracing subscriber with two
-    // layers:
-    //   1. A console (fmt) layer  — structured, coloured, human-readable.
-    //   2. An OTLP layer          — exports spans to the collector in real time.
+    // Installs a dual-layer tracing subscriber:
+    //   • fmt  — coloured, human-readable console output
+    //   • OTLP — batched gRPC export to the configured collector
     //
-    // The returned `TelemetryGuard` is an RAII handle.  Dropping it triggers
-    // `shutdown_telemetry`, which flushes the batch exporter so no spans are
-    // lost on exit.  Keep `_guard` alive for the entire duration of `main`.
+    // The `TelemetryGuard` flushes the batch exporter on drop, ensuring no
+    // spans are lost during graceful shutdown.
+
     let otlp_endpoint =
         std::env::var("OTLP_ENDPOINT").unwrap_or_else(|_| "http://localhost:4317".to_string());
 
     let _guard = init_telemetry_with_otel(TelemetryConfig {
-        service_name: "solana-system-transfer-otel".into(),
-        log_filter: "info,solana_indexer_sdk=debug".into(),
+        service_name: "solana-sol-transfer-indexer".into(),
+        log_filter: "warn,solana_indexer_sdk=info,otel_indexer=debug".into(),
         enable_console_colors: true,
-        show_target: true,
+        show_target: false,
         show_thread_ids: false,
         otel: Some(OtelConfig {
             endpoint: otlp_endpoint.clone(),
@@ -213,64 +260,74 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }),
     });
 
-    tracing::info!(
-        otlp_endpoint = %otlp_endpoint,
-        "🔭 telemetry initialised — spans flowing to collector"
-    );
+    tracing::info!(otlp_endpoint = %otlp_endpoint, "telemetry initialised");
 
-    // ── Step 2: Configure the indexer ─────────────────────────────────────────
+    // ── Configuration ─────────────────────────────────────────────────────────
 
-    let rpc_url = "https://api.devnet.solana.com";
-    let database_url =
-        std::env::var("DATABASE_URL").expect("DATABASE_URL must be set (see examples/.env)");
+    let rpc_url =
+        std::env::var("RPC_URL").unwrap_or_else(|_| "https://api.devnet.solana.com".to_string());
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
 
-    // System Program — watches every native SOL transfer on devnet.
-    let system_program = "11111111111111111111111111111111";
+    // Discover a safe, recent block to begin historical backfill
+    // (Public RPCs drop genesis blocks, so slot 0 backfills will fail).
+    let rpc_client = solana_client::rpc_client::RpcClient::new(&rpc_url);
+    let latest_slot = rpc_client.get_slot().unwrap_or(443_000_000);
+    let backfill_start = latest_slot.saturating_sub(100);
 
     let config = SolanaIndexerConfigBuilder::new()
-        .with_rpc(rpc_url)
-        .with_database(database_url.clone())
-        .program_id(system_program)
-        // Poll every 5 seconds; devnet generates a new block every ~400 ms.
+        .with_rpc(&rpc_url)
+        .with_database(&database_url)
+        // Index only System Program transactions (native SOL transfers).
+        .program_id(SYSTEM_PROGRAM_ID)
+        // Decode instruction inputs only; logs and account diffing are not needed here.
+        .with_indexing_mode(IndexingMode::inputs())
+        // Real-time polling: conservative interval to stay within public RPC rate limits.
         .with_poll_interval(5)
         .with_batch_size(20)
         .with_worker_threads(4)
+        // Backfill: concurrently fills historical gaps, capped at 3 parallel
+        // requests to avoid hitting the 10 req/s limit on public RPC nodes.
+        .with_backfill(BackfillConfig {
+            enabled: true,
+            batch_size: 50,
+            concurrency: 3,
+            start_slot: Some(backfill_start),
+            end_slot: Some(latest_slot),
+            poll_interval_secs: 2,
+            ..Default::default()
+        })
         .build()?;
 
-    // ── Step 3: Wire up the indexer ───────────────────────────────────────────
+    // ── Wiring ────────────────────────────────────────────────────────────────
+
+    tracing::info!(rpc_url = %rpc_url, program = SYSTEM_PROGRAM_ID, "configuring indexer");
 
     let mut indexer = SolanaIndexer::new(config).await?;
 
-    // Initialise the database schema before starting.
+    // Ensure schema exists before any data arrives.
     let db = PgPool::connect(&database_url).await?;
     SolTransferHandler.initialize_schema(&db).await?;
+    tracing::info!("schema ready");
 
-    // Register the decoder (enables instruction-input mode automatically).
     indexer.register_decoder("system", SolTransferDecoder)?;
-
-    // Register the event handler. Every decoded SolTransfer triggers
-    // `SolTransferHandler::handle`, which emits an OTel span.
     indexer.register_handler(SolTransferHandler)?;
+    indexer.register_backfill_handler(SolTransferHandler)?;
 
-    tracing::info!("▶️  starting indexer — press Ctrl+C to stop");
+    // ── Run ───────────────────────────────────────────────────────────────────
 
-    // ── Step 4: Run until Ctrl+C ──────────────────────────────────────────────
+    tracing::info!("indexer started — press Ctrl+C to stop");
 
-    // Drive the indexer in a background task so the main thread can wait for
-    // the shutdown signal without blocking the async runtime.
     let indexer_task = tokio::spawn(async move { indexer.start().await });
 
     tokio::signal::ctrl_c().await?;
-    tracing::info!("🛑 shutdown signal received");
+    tracing::info!("shutdown signal received, flushing spans…");
 
-    // Wait for the indexer to wind down gracefully.
     if let Err(e) = indexer_task.await {
         tracing::error!(error = ?e, "indexer task panicked");
     }
 
-    // `_guard` is dropped here, which calls `shutdown_telemetry` and flushes
-    // any spans still queued in the batch exporter.
-    tracing::info!("✅ all spans flushed — goodbye");
+    // _guard drops here → shutdown_telemetry() flushes the OTLP batch exporter.
+    tracing::info!("shutdown complete");
 
     Ok(())
 }

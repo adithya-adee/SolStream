@@ -1,6 +1,6 @@
 use super::config::TelemetryConfig;
 use std::sync::OnceLock;
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 // ── Shared state ─────────────────────────────────────────────────────────────
 
@@ -70,7 +70,6 @@ pub fn init_telemetry(config: TelemetryConfig) -> TelemetryGuard {
 #[cfg(feature = "opentelemetry")]
 pub fn init_telemetry_with_otel(config: TelemetryConfig) -> TelemetryGuard {
     use opentelemetry::global;
-    use tracing_subscriber::Registry;
 
     TELEMETRY_INIT.get_or_init(|| {
         let env_filter = EnvFilter::try_from_default_env()
@@ -81,36 +80,40 @@ pub fn init_telemetry_with_otel(config: TelemetryConfig) -> TelemetryGuard {
             .with_thread_ids(config.show_thread_ids)
             .with_ansi(config.enable_console_colors);
 
-        // Collect layers into a Vec<Box<dyn Layer<Registry> + Send + Sync>>
-        // so all branches share a single call to .init().
-        // This is the standard pattern for conditionally adding layers.
-        let mut layers: Vec<Box<dyn Layer<Registry> + Send + Sync + 'static>> =
-            vec![env_filter.boxed(), fmt_layer.boxed()];
-
         // Only add the OTel layer when an OtelConfig is provided.
         if let Some(ref otel_cfg) = config.otel {
             match super::otel::build_otel_pipeline(&config.service_name, otel_cfg) {
                 Ok((otel_layer, provider)) => {
                     // Register as global provider so code using the OTel API
-                    // directly (e.g. `opentelemetry::global::tracer(...)`)
-                    // also works.
+                    // directly (e.g. `opentelemetry::global::tracer(...)`) works.
                     global::set_tracer_provider(provider.clone());
 
                     // Store for graceful shutdown.
                     let _ = OTEL_PROVIDER.set(provider);
 
-                    layers.push(otel_layer.boxed());
+                    tracing_subscriber::registry()
+                        .with(env_filter)
+                        .with(fmt_layer)
+                        .with(otel_layer)
+                        .init();
                 }
                 Err(e) => {
                     eprintln!(
                         "[solana-indexer-sdk] WARNING: failed to build OTLP pipeline \
                          (falling back to console-only): {e}"
                     );
+                    tracing_subscriber::registry()
+                        .with(env_filter)
+                        .with(fmt_layer)
+                        .init();
                 }
             }
+        } else {
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(fmt_layer)
+                .init();
         }
-
-        tracing_subscriber::registry().with(layers).init();
     });
 
     TelemetryGuard { _private: () }
@@ -246,7 +249,7 @@ mod tests {
 
             // Either outcome is acceptable here: some OTLP builds validate the
             // URL eagerly, others defer. What must NOT happen is a panic.
-            let result = build_otel_pipeline("test-service", &cfg);
+            let result = build_otel_pipeline::<tracing_subscriber::Registry>("test-service", &cfg);
             match result {
                 Ok((_layer, provider)) => {
                     // Got a pipeline — shut it down cleanly.

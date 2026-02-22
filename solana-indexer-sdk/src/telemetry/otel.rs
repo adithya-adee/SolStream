@@ -62,19 +62,19 @@ impl Default for OtelConfig {
 ///
 /// Returns an error if the OTLP exporter cannot be constructed (e.g. TLS
 /// failure, bad endpoint URL).
-pub fn build_otel_pipeline(
+pub fn build_otel_pipeline<S>(
     service_name: &str,
     otel_config: &OtelConfig,
 ) -> Result<
     (
-        tracing_opentelemetry::OpenTelemetryLayer<
-            tracing_subscriber::Registry,
-            opentelemetry_sdk::trace::Tracer,
-        >,
+        tracing_opentelemetry::OpenTelemetryLayer<S, opentelemetry_sdk::trace::Tracer>,
         SdkTracerProvider,
     ),
     Box<dyn std::error::Error + Send + Sync + 'static>,
-> {
+>
+where
+    S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
+{
     // Build the span exporter for the chosen transport.
     let exporter: opentelemetry_otlp::SpanExporter = match otel_config.protocol {
         OtlpProtocol::Grpc => opentelemetry_otlp::SpanExporter::builder()

@@ -35,6 +35,7 @@ use async_trait::async_trait;
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_indexer_sdk::{
     calculate_discriminator,
+    config::{BackfillConfig, IndexingMode},
     telemetry::{init_telemetry_with_otel, OtelConfig, OtlpProtocol, TelemetryConfig},
     EventDiscriminator, EventHandler, InstructionDecoder, SolanaIndexer,
     SolanaIndexerConfigBuilder, SolanaIndexerError, TxMetadata,
@@ -192,6 +193,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_laserstream(grpc_url, x_token)
         .with_database(database_url.clone())
         .program_id(system_program)
+        // ── Production Grade Configurations ──
+        .with_indexing_mode(IndexingMode::inputs())
+        // Backfill will safely fill historical gaps leveraging standard RPC limits
+        .with_backfill(BackfillConfig {
+            enabled: true,
+            batch_size: 50,
+            concurrency: 10,
+            poll_interval_secs: 2,
+            ..Default::default()
+        })
         .with_worker_threads(4)
         .build()?;
 
