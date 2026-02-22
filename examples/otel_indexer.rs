@@ -245,8 +245,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The `TelemetryGuard` flushes the batch exporter on drop, ensuring no
     // spans are lost during graceful shutdown.
 
-    let otlp_endpoint =
-        std::env::var("OTLP_ENDPOINT").unwrap_or_else(|_| "http://localhost:4317".to_string());
+    let otel_config = std::env::var("OTLP_ENDPOINT")
+        .ok()
+        .map(|endpoint| OtelConfig {
+            endpoint,
+            protocol: OtlpProtocol::Grpc,
+        });
 
     let _guard = init_telemetry_with_otel(TelemetryConfig {
         service_name: "solana-sol-transfer-indexer".into(),
@@ -254,13 +258,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         enable_console_colors: true,
         show_target: false,
         show_thread_ids: false,
-        otel: Some(OtelConfig {
-            endpoint: otlp_endpoint.clone(),
-            protocol: OtlpProtocol::Grpc,
-        }),
+        otel: otel_config,
     });
 
-    tracing::info!(otlp_endpoint = %otlp_endpoint, "telemetry initialised");
+    if let Ok(endpoint) = std::env::var("OTLP_ENDPOINT") {
+        tracing::info!(otlp_endpoint = %endpoint, "telemetry initialised with otlp");
+    } else {
+        tracing::info!("telemetry initialised (console only)");
+    }
 
     // ── Configuration ─────────────────────────────────────────────────────────
 
